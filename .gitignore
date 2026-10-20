@@ -1,0 +1,4 @@
+__pycache__/
+*.py[cod]
+**/schemas/gschemas.compiled
+*.shell-extension.zip

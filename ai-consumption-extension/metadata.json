@@ -1,0 +1,16 @@
+{
+  "name": "AI Consumption Monitor",
+  "description": "Monitor token consumption, active sessions, and quota for Claude Code and Antigravity.",
+  "uuid": "ai-consumption-monitor@omarjayg",
+  "shell-version": [
+    "45",
+    "46",
+    "47",
+    "48",
+    "49",
+    "50"
+  ],
+  "settings-schema": "org.gnome.shell.extensions.ai-consumption-monitor",
+  "url": "https://github.com/ogaston/my-gnome-extensions",
+  "version": 1
+}
