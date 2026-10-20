@@ -3,7 +3,9 @@ import json
 import os
 import shutil
 import sqlite3
+import stat
 import tempfile
+import time
 import unittest
 
 # Import collector modules
@@ -160,6 +162,183 @@ class TestCollector(unittest.TestCase):
         self.assertEqual(res["today"]["steps"], 65)
         self.assertEqual(res["active_count"], 1)
         self.assertEqual(len(res["active_sessions"]), 3)
+
+    def _claude_line(self, msg_id, output_tokens, timestamp=None, request_id="req-1"):
+        return json.dumps({
+            "type": "assistant",
+            "requestId": request_id,
+            "timestamp": timestamp or f"{self.today_str}T10:00:00Z",
+            "message": {
+                "id": msg_id,
+                "model": "claude-sonnet-5-5",
+                "usage": {"input_tokens": 10, "output_tokens": output_tokens,
+                          "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+            }
+        }) + "\n"
+
+    def _claude_project(self, name="proj"):
+        claude_dir = os.path.join(self.test_dir, ".claude")
+        proj_dir = os.path.join(claude_dir, "projects", name)
+        os.makedirs(proj_dir, exist_ok=True)
+        return claude_dir, proj_dir
+
+    def _use_timezone(self, tz):
+        old_tz = os.environ.get("TZ")
+        os.environ["TZ"] = tz
+        time.tzset()
+
+        def restore():
+            if old_tz is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = old_tz
+            time.tzset()
+        self.addCleanup(restore)
+
+    def test_claude_dedup_streamed_lines(self):
+        claude_dir, proj_dir = self._claude_project()
+        with open(os.path.join(proj_dir, "s.jsonl"), "w", encoding="utf-8") as f:
+            for out in (2, 50, 114):
+                f.write(self._claude_line("msg-A", out))
+
+        res = collector.collect_claude_metrics(claude_dir, {}, self.today_str, skip_network=True)
+        self.assertEqual(res["today"]["messages"], 1)
+        self.assertEqual(res["today"]["output_tokens"], 114)
+        self.assertEqual(res["today"]["total_tokens"], 124)
+        self.assertEqual(res["lifetime"]["total_tokens"], 124)
+
+    def test_claude_dedup_across_incremental_runs(self):
+        claude_dir, proj_dir = self._claude_project()
+        session_file = os.path.join(proj_dir, "s.jsonl")
+        with open(session_file, "w", encoding="utf-8") as f:
+            f.write(self._claude_line("msg-A", 2))
+
+        cache = {}
+        res = collector.collect_claude_metrics(claude_dir, cache, self.today_str, skip_network=True)
+        self.assertEqual(res["today"]["total_tokens"], 12)
+
+        with open(session_file, "a", encoding="utf-8") as f:
+            f.write(self._claude_line("msg-A", 114))
+            f.write(self._claude_line("msg-B", 5, request_id="req-2"))
+
+        res = collector.collect_claude_metrics(claude_dir, cache, self.today_str, skip_network=True)
+        self.assertEqual(res["today"]["messages"], 2)
+        self.assertEqual(res["today"]["output_tokens"], 119)
+        self.assertEqual(res["lifetime"]["total_tokens"], 139)
+
+        # Unchanged file served from cache keeps the same totals
+        res = collector.collect_claude_metrics(claude_dir, cache, self.today_str, skip_network=True)
+        self.assertEqual(res["today"]["total_tokens"], 139)
+        self.assertEqual(res["lifetime"]["total_tokens"], 139)
+
+    def test_claude_dedup_across_files_today(self):
+        claude_dir, proj_dir = self._claude_project()
+        for name in ("original.jsonl", "resumed.jsonl"):
+            with open(os.path.join(proj_dir, name), "w", encoding="utf-8") as f:
+                f.write(self._claude_line("msg-A", 40))
+
+        res = collector.collect_claude_metrics(claude_dir, {}, self.today_str, skip_network=True)
+        self.assertEqual(res["today"]["messages"], 1)
+        self.assertEqual(res["today"]["total_tokens"], 50)
+
+    def test_claude_partial_line_not_lost(self):
+        claude_dir, proj_dir = self._claude_project()
+        session_file = os.path.join(proj_dir, "s.jsonl")
+        second = self._claude_line("msg-B", 20, request_id="req-2")
+        with open(session_file, "w", encoding="utf-8") as f:
+            f.write(self._claude_line("msg-A", 10))
+            f.write(second[:40])  # writer is mid-line
+
+        cache = {}
+        res = collector.collect_claude_metrics(claude_dir, cache, self.today_str, skip_network=True)
+        self.assertEqual(res["today"]["messages"], 1)
+
+        with open(session_file, "a", encoding="utf-8") as f:
+            f.write(second[40:])
+
+        res = collector.collect_claude_metrics(claude_dir, cache, self.today_str, skip_network=True)
+        self.assertEqual(res["today"]["messages"], 2)
+        self.assertEqual(res["today"]["total_tokens"], 50)
+
+    def test_claude_today_uses_local_timezone(self):
+        self._use_timezone("America/Bogota")  # UTC-5, no DST
+        claude_dir, proj_dir = self._claude_project()
+        with open(os.path.join(proj_dir, "s.jsonl"), "w", encoding="utf-8") as f:
+            # 21:00 local on the 20th -> counts
+            f.write(self._claude_line("msg-late", 1, timestamp="2026-10-21T02:00:00.000Z"))
+            # 22:00 local on the 19th -> does not count
+            f.write(self._claude_line("msg-early", 100, timestamp="2026-10-20T03:00:00.000Z", request_id="req-2"))
+
+        res = collector.collect_claude_metrics(claude_dir, {}, "2026-10-20", skip_network=True)
+        self.assertEqual(res["today"]["messages"], 1)
+        self.assertEqual(res["today"]["output_tokens"], 1)
+
+    def test_antigravity_today_uses_local_timezone(self):
+        self._use_timezone("America/Bogota")
+        ag_dir = os.path.join(self.test_dir, "antigravity-cli")
+        os.makedirs(ag_dir, exist_ok=True)
+        con = sqlite3.connect(os.path.join(ag_dir, "conversation_summaries.db"))
+        con.execute("""
+            CREATE TABLE conversation_summaries (
+                conversation_id text PRIMARY KEY, title text, workspace_uris text,
+                step_count integer, last_modified_time datetime, not_fully_idle numeric
+            )
+        """)
+        con.executemany("INSERT INTO conversation_summaries VALUES (?, 't', '', ?, ?, 0)", [
+            ("yesterday-evening", 7, "2026-10-20 03:12:00.187888088+00:00"),
+            ("today-morning", 5, "2026-10-20 15:27:23.0099021+00:00"),
+            ("today-night", 3, "2026-10-21 02:30:00.5+00:00"),
+        ])
+        con.commit()
+        con.close()
+
+        res = collector.collect_antigravity_metrics(ag_dir, "2026-10-20")
+        self.assertEqual(res["today"]["conversations"], 2)
+        self.assertEqual(res["today"]["steps"], 8)
+        self.assertEqual(res["lifetime"]["steps"], 15)
+
+    def test_save_cache_private_and_atomic(self):
+        cache_path = os.path.join(self.test_dir, "cache-dir", "cache.json")
+        collector.save_cache(cache_path, {"a": 1})
+        self.assertEqual(stat.S_IMODE(os.stat(cache_path).st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.dirname(cache_path)).st_mode), 0o700)
+        self.assertEqual(collector.load_cache(cache_path), {"a": 1})
+
+        # A symlink planted at the cache path is replaced, never written through
+        victim = os.path.join(self.test_dir, "victim.txt")
+        with open(victim, "w", encoding="utf-8") as f:
+            f.write("keep me")
+        os.unlink(cache_path)
+        os.symlink(victim, cache_path)
+        collector.save_cache(cache_path, {"b": 2})
+        self.assertFalse(os.path.islink(cache_path))
+        with open(victim, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "keep me")
+        self.assertEqual(collector.load_cache(cache_path), {"b": 2})
+        self.assertEqual(os.listdir(os.path.dirname(cache_path)), ["cache.json"])
+
+    def test_default_cache_path_respects_xdg(self):
+        old = os.environ.get("XDG_CACHE_HOME")
+        self.addCleanup(lambda: os.environ.__setitem__("XDG_CACHE_HOME", old) if old is not None
+                        else os.environ.pop("XDG_CACHE_HOME", None))
+        os.environ["XDG_CACHE_HOME"] = self.test_dir
+        self.assertEqual(collector.default_cache_path(),
+                         os.path.join(self.test_dir, "ai-consumption-monitor", "cache.json"))
+
+    def test_remove_legacy_cache(self):
+        legacy = os.path.join(self.test_dir, "legacy.json")
+        with open(legacy, "w", encoding="utf-8") as f:
+            f.write("{}")
+        collector.remove_legacy_cache(legacy)
+        self.assertFalse(os.path.exists(legacy))
+
+        target = os.path.join(self.test_dir, "target.json")
+        with open(target, "w", encoding="utf-8") as f:
+            f.write("{}")
+        os.symlink(target, legacy)
+        collector.remove_legacy_cache(legacy)
+        self.assertTrue(os.path.islink(legacy))
+        self.assertTrue(os.path.exists(target))
 
 if __name__ == "__main__":
     unittest.main()

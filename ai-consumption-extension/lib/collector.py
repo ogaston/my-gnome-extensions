@@ -10,10 +10,14 @@ import datetime
 import glob
 import json
 import os
+import re
 import sqlite3
+import stat
+import tempfile
 import urllib.request
 
 OAUTH_CACHE_TTL_SECONDS = 60
+LEGACY_CACHE_PATH = "/tmp/ai-consumption-cache.json"
 
 
 def parse_args():
@@ -24,6 +28,75 @@ def parse_args():
     parser.add_argument("--reset-cache", action="store_true", help="Force re-reading all files and APIs")
     parser.add_argument("--skip-network", action="store_true", help="Skip live OAuth quota API requests")
     return parser.parse_args()
+
+
+def to_local_date(ts):
+    """Return the local YYYY-MM-DD for an ISO-8601 timestamp ('' if unparseable).
+
+    Timestamps without an offset are assumed to already be in local time.
+    """
+    if not ts:
+        return ""
+    s = str(ts).strip().replace(" ", "T", 1)
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    # fromisoformat accepts at most 6 fractional digits (Antigravity writes 9).
+    s = re.sub(r"(\.\d{6})\d+", r"\1", s)
+    try:
+        dt = datetime.datetime.fromisoformat(s)
+    except ValueError:
+        return ""
+    if dt.tzinfo is not None:
+        dt = dt.astimezone()
+    return dt.date().isoformat()
+
+
+def is_today(ts, today_str):
+    return to_local_date(ts) == today_str
+
+
+def default_cache_path():
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(base, "ai-consumption-monitor", "cache.json")
+
+
+def load_cache(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            cache = json.load(f)
+        return cache if isinstance(cache, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_cache(path, cache):
+    """Write the cache privately (0600) and atomically via rename."""
+    cache_dir = os.path.dirname(path) or "."
+    os.makedirs(cache_dir, mode=0o700, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=cache_dir, prefix=".cache-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(cache, f)
+            f.flush()
+            os.fsync(f.fileno())
+        # os.replace swaps the directory entry, so a planted symlink is replaced, not followed.
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def remove_legacy_cache(path=LEGACY_CACHE_PATH):
+    """Delete the old world-readable /tmp cache, only if it is our own regular file."""
+    try:
+        st = os.lstat(path)
+        if stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid():
+            os.unlink(path)
+    except OSError:
+        pass
 
 
 def is_pid_active(pid, process_filter=None):
@@ -148,11 +221,16 @@ def parse_claude_jsonl(file_path, start_offset=0):
     usage_entries = []
     new_offset = start_offset
     try:
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+        with open(file_path, "rb") as f:
             if start_offset > 0:
                 f.seek(start_offset)
-            for line in f:
-                line_str = line.strip()
+            while True:
+                raw = f.readline()
+                if not raw.endswith(b"\n"):
+                    # EOF, or a line still being written: re-read it on the next run.
+                    break
+                new_offset += len(raw)
+                line_str = raw.decode("utf-8", errors="ignore").strip()
                 if not line_str:
                     continue
                 try:
@@ -161,7 +239,10 @@ def parse_claude_jsonl(file_path, start_offset=0):
                         msg = obj.get("message", {})
                         usage = msg.get("usage")
                         if usage:
+                            msg_id = msg.get("id")
                             usage_entries.append({
+                                # Claude Code repeats usage on one line per content block.
+                                "key": f"{msg_id}:{obj.get('requestId')}" if msg_id else None,
                                 "timestamp": obj.get("timestamp", ""),
                                 "model": msg.get("model", "unknown"),
                                 "input_tokens": usage.get("input_tokens", 0),
@@ -171,10 +252,25 @@ def parse_claude_jsonl(file_path, start_offset=0):
                             })
                 except json.JSONDecodeError:
                     continue
-            new_offset = f.tell()
     except Exception:
         pass
     return usage_entries, new_offset
+
+
+def _entry_tokens(e):
+    return (e.get("input_tokens", 0) + e.get("output_tokens", 0) +
+            e.get("cache_creation", 0) + e.get("cache_read", 0))
+
+
+def _collect_today(today_by_key, entries, today_str, file_path):
+    """Merge a file's today entries, keeping the largest usage per message key."""
+    for i, e in enumerate(entries):
+        if not is_today(e.get("timestamp", ""), today_str):
+            continue
+        k = e.get("key") or (file_path, i)
+        prev = today_by_key.get(k)
+        if prev is None or _entry_tokens(e) > _entry_tokens(prev):
+            today_by_key[k] = e
 
 
 def collect_claude_metrics(claude_dir, cache, today_str, skip_network=False, force_refresh=False):
@@ -214,72 +310,75 @@ def collect_claude_metrics(claude_dir, cache, today_str, skip_network=False, for
 
     file_cache = cache.get("claude_files", {})
     new_file_cache = {}
+    # Today's entries across all files, deduplicated by message key (resumed
+    # sessions copy history into new files). Lifetime is only deduplicated
+    # within a file; cross-file dedup would require caching every key.
+    today_by_key = {}
 
     for jf in jsonl_files:
         try:
-            stat = os.stat(jf)
+            st = os.stat(jf)
             cached_info = file_cache.get(jf)
 
             if (cached_info and
-                    cached_info.get("mtime") == stat.st_mtime and
-                    cached_info.get("size") == stat.st_size):
+                    cached_info.get("mtime") == st.st_mtime and
+                    cached_info.get("size") == st.st_size):
                 new_file_cache[jf] = cached_info
                 res["lifetime"]["total_tokens"] += cached_info.get("lifetime_tokens", 0)
-                for entry in cached_info.get("today_entries", []):
-                    if entry.get("timestamp", "").startswith(today_str):
-                        res["today"]["input_tokens"] += entry.get("input_tokens", 0)
-                        res["today"]["output_tokens"] += entry.get("output_tokens", 0)
-                        res["today"]["cache_creation_tokens"] += entry.get("cache_creation", 0)
-                        res["today"]["cache_read_tokens"] += entry.get("cache_read", 0)
-                        res["today"]["messages"] += 1
-                        m = entry.get("model", "unknown")
-                        res["models"][m] = res["models"].get(m, 0) + entry.get("input_tokens", 0) + entry.get("output_tokens", 0)
+                _collect_today(today_by_key, cached_info.get("today_entries", []), today_str, jf)
                 continue
 
             start_offset = 0
-            prev_lifetime = 0
-            existing_today = []
-            if cached_info and stat.st_size >= cached_info.get("size", 0):
+            lifetime = 0
+            today_entries = []
+            last_key = None
+            last_tokens = 0
+            if cached_info and st.st_size >= cached_info.get("size", 0):
                 start_offset = cached_info.get("offset", 0)
-                prev_lifetime = cached_info.get("lifetime_tokens", 0)
-                existing_today = [e for e in cached_info.get("today_entries", []) if e.get("timestamp", "").startswith(today_str)]
-                for prev_e in existing_today:
-                    res["today"]["input_tokens"] += prev_e.get("input_tokens", 0)
-                    res["today"]["output_tokens"] += prev_e.get("output_tokens", 0)
-                    res["today"]["cache_creation_tokens"] += prev_e.get("cache_creation", 0)
-                    res["today"]["cache_read_tokens"] += prev_e.get("cache_read", 0)
-                    res["today"]["messages"] += 1
-                    m = prev_e.get("model", "unknown")
-                    res["models"][m] = res["models"].get(m, 0) + prev_e.get("input_tokens", 0) + prev_e.get("output_tokens", 0)
+                lifetime = cached_info.get("lifetime_tokens", 0)
+                today_entries = [e for e in cached_info.get("today_entries", [])
+                                 if is_today(e.get("timestamp", ""), today_str)]
+                last_key = cached_info.get("last_key")
+                last_tokens = cached_info.get("last_tokens", 0)
 
             entries, new_offset = parse_claude_jsonl(jf, start_offset)
 
-            incremental_tokens = 0
             for e in entries:
-                tot = e["input_tokens"] + e["output_tokens"] + e["cache_creation"] + e["cache_read"]
-                incremental_tokens += tot
-                if e.get("timestamp", "").startswith(today_str):
-                    existing_today.append(e)
-                    res["today"]["input_tokens"] += e["input_tokens"]
-                    res["today"]["output_tokens"] += e["output_tokens"]
-                    res["today"]["cache_creation_tokens"] += e["cache_creation"]
-                    res["today"]["cache_read_tokens"] += e["cache_read"]
-                    res["today"]["messages"] += 1
-                    m = e.get("model", "unknown")
-                    res["models"][m] = res["models"].get(m, 0) + e["input_tokens"] + e["output_tokens"]
+                tot = _entry_tokens(e)
+                if e["key"] is not None and e["key"] == last_key:
+                    # Later line of the same streamed message: its usage supersedes the previous one.
+                    lifetime += tot - last_tokens
+                    if today_entries and today_entries[-1].get("key") == last_key:
+                        today_entries.pop()
+                else:
+                    lifetime += tot
+                if is_today(e.get("timestamp", ""), today_str):
+                    today_entries.append(e)
+                last_key, last_tokens = e["key"], tot
 
-            total_lifetime = prev_lifetime + incremental_tokens
-            res["lifetime"]["total_tokens"] += total_lifetime
+            res["lifetime"]["total_tokens"] += lifetime
+            _collect_today(today_by_key, today_entries, today_str, jf)
 
             new_file_cache[jf] = {
-                "mtime": stat.st_mtime,
-                "size": stat.st_size,
+                "mtime": st.st_mtime,
+                "size": st.st_size,
                 "offset": new_offset,
-                "lifetime_tokens": total_lifetime,
-                "today_entries": existing_today
+                "lifetime_tokens": lifetime,
+                "today_entries": today_entries,
+                "last_key": last_key,
+                "last_tokens": last_tokens
             }
         except Exception:
             continue
+
+    for entry in today_by_key.values():
+        res["today"]["input_tokens"] += entry.get("input_tokens", 0)
+        res["today"]["output_tokens"] += entry.get("output_tokens", 0)
+        res["today"]["cache_creation_tokens"] += entry.get("cache_creation", 0)
+        res["today"]["cache_read_tokens"] += entry.get("cache_read", 0)
+        res["today"]["messages"] += 1
+        m = entry.get("model", "unknown")
+        res["models"][m] = res["models"].get(m, 0) + entry.get("input_tokens", 0) + entry.get("output_tokens", 0)
 
     cache["claude_files"] = new_file_cache
     res["today"]["total_tokens"] = (
@@ -471,14 +570,12 @@ def collect_antigravity_metrics(ag_dir, today_str, cache=None, skip_network=Fals
                 res["lifetime"]["conversations"] = row[0]
                 res["lifetime"]["steps"] = row[1]
 
-            cur.execute(
-                "SELECT count(*), coalesce(sum(step_count), 0) FROM conversation_summaries WHERE last_modified_time >= ?",
-                (today_str,)
-            )
-            t_row = cur.fetchone()
-            if t_row:
-                res["today"]["conversations"] = t_row[0]
-                res["today"]["steps"] = t_row[1]
+            # Timestamps are stored in UTC, so "today" is filtered by local date in Python.
+            cur.execute("SELECT step_count, last_modified_time FROM conversation_summaries")
+            for steps, lmt in cur.fetchall():
+                if is_today(lmt, today_str):
+                    res["today"]["conversations"] += 1
+                    res["today"]["steps"] += steps or 0
 
             cur.execute("""
                 SELECT conversation_id, title, workspace_uris, step_count, last_modified_time, not_fully_idle
@@ -551,15 +648,10 @@ def main():
     home = os.path.expanduser("~")
     claude_dir = args.claude_dir if args.claude_dir else os.path.join(home, ".claude")
     ag_dir = args.antigravity_dir if args.antigravity_dir else os.path.join(home, ".gemini", "antigravity-cli")
-    cache_path = args.cache_file if args.cache_file else "/tmp/ai-consumption-cache.json"
+    cache_path = args.cache_file if args.cache_file else default_cache_path()
+    remove_legacy_cache()
 
-    cache = {}
-    if not args.reset_cache and os.path.exists(cache_path):
-        try:
-            with open(cache_path, "r", encoding="utf-8") as f:
-                cache = json.load(f)
-        except Exception:
-            cache = {}
+    cache = {} if args.reset_cache else load_cache(cache_path)
 
     today_str = datetime.datetime.now().strftime("%Y-%m-%d")
 
@@ -575,8 +667,7 @@ def main():
     )
 
     try:
-        with open(cache_path, "w", encoding="utf-8") as f:
-            json.dump(cache, f)
+        save_cache(cache_path, cache)
     except Exception:
         pass
 
