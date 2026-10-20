@@ -11,6 +11,7 @@
     "50"
   ],
   "settings-schema": "org.gnome.shell.extensions.ai-consumption-monitor",
+  "gettext-domain": "ai-consumption-monitor",
   "url": "https://github.com/ogaston/my-gnome-extensions",
   "version": 1
 }

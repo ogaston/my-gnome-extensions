@@ -72,9 +72,27 @@ export class AiConsumptionPrefsPage extends Adw.PreferencesPage {
         // Group 2: Warning Thresholds
         const thresholdGroup = new Adw.PreferencesGroup({
             title: _('Alert Thresholds'),
-            description: _('Visual warning indicators when daily limits are reached (0 to disable)'),
+            description: _('When to highlight quota and daily usage (0 disables a daily threshold)'),
         });
         this.add(thresholdGroup);
+
+        const quotaWarningRow = new Adw.SpinRow({
+            title: _('Quota Warning (%)'),
+            subtitle: _('Warn when a quota window reaches this usage'),
+            adjustment: new Gtk.Adjustment({
+                lower: 1,
+                upper: 100,
+                step_increment: 5,
+                page_increment: 10,
+            }),
+        });
+        this._settings.bind(
+            'quota-warning-percent',
+            quotaWarningRow,
+            'value',
+            Gio.SettingsBindFlags.DEFAULT
+        );
+        thresholdGroup.add(quotaWarningRow);
 
         const claudeThresholdRow = new Adw.SpinRow({
             title: _('Claude Daily Token Threshold'),
