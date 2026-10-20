@@ -72,7 +72,8 @@ export default class AiConsumptionExtension extends Extension {
             this._indicator,
             this._service,
             this._settings,
-            () => this.openPreferences()
+            () => this.openPreferences(),
+            this.path
         );
 
         // Connect to metrics updates
