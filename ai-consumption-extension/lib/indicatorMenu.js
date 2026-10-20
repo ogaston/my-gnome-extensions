@@ -1,3 +1,4 @@
+import Gio from 'gi://Gio';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import Shell from 'gi://Shell';
@@ -14,6 +15,13 @@ import {
 
 const BLUR_UUID = 'blur-my-shell@aunetx';
 
+// Brand marks shipped in icons/. Claude is a -symbolic SVG so St tints it
+// with the CSS color; Antigravity keeps its full-color gradient.
+const LOGO_FILES = {
+    claude: 'claude-symbolic.svg',
+    gemini: 'antigravity.png',
+};
+
 function setVertical(box) {
     if ('orientation' in box) {
         box.orientation = Clutter.Orientation.VERTICAL;
@@ -23,8 +31,9 @@ function setVertical(box) {
 }
 
 export class IndicatorMenuManager {
-    constructor(panelButton, metricsService, settings, openPreferencesCallback) {
+    constructor(panelButton, metricsService, settings, openPreferencesCallback, extensionPath) {
         setGettext(_);
+        this._extensionPath = extensionPath;
         this._button = panelButton;
         this._menu = panelButton.menu;
         this._service = metricsService;
@@ -128,7 +137,7 @@ export class IndicatorMenuManager {
 
         this._rootBox.add_child(headerRow);
 
-        // 2. Segmented Tab Bar: Claude | Gemini
+        // 2. Segmented Tab Bar: Claude | Antigravity
         const tabBar = new St.BoxLayout({
             style_class: 'ai-usage-tab-bar',
             x_expand: true,
@@ -137,12 +146,23 @@ export class IndicatorMenuManager {
         this._tabButtons = {};
         const tabs = [
             { id: 'claude', label: _('Claude') },
-            { id: 'gemini', label: _('Gemini') },
+            { id: 'gemini', label: _('Antigravity') },
         ];
 
         for (const t of tabs) {
+            const content = new St.BoxLayout({
+                style_class: 'ai-usage-tab-content',
+                x_align: Clutter.ActorAlign.CENTER,
+            });
+            content.add_child(new St.Icon({
+                gicon: this._logoIcon(t.id),
+                style_class: `ai-usage-tab-logo ai-usage-logo-${t.id}`,
+                y_align: Clutter.ActorAlign.CENTER,
+            }));
+            content.add_child(new St.Label({ text: t.label, y_align: Clutter.ActorAlign.CENTER }));
+
             const btn = new St.Button({
-                label: t.label,
+                child: content,
                 style_class: 'ai-usage-tab-btn',
                 x_expand: true,
                 can_focus: true,
@@ -236,6 +256,11 @@ export class IndicatorMenuManager {
         this._updatedLabel.text = formatUpdatedAgo(data.timestamp);
     }
 
+    _logoIcon(id) {
+        return Gio.FileIcon.new(Gio.File.new_for_path(
+            `${this._extensionPath}/icons/${LOGO_FILES[id]}`));
+    }
+
     _createProgressBar(percent, colorVariant) {
         const clamped = Math.min(100, Math.max(0, percent));
         const track = new St.BoxLayout({
@@ -267,7 +292,7 @@ export class IndicatorMenuManager {
             topRow.add_child(new St.Bin({
                 style_class: `ai-usage-icon ai-usage-icon-${card.icon}`,
                 y_align: Clutter.ActorAlign.CENTER,
-                child: new St.Icon({ icon_name: 'starred-symbolic', icon_size: 16 }),
+                child: new St.Icon({ gicon: this._logoIcon(card.icon), icon_size: 18 }),
             }));
         }
 
