@@ -14,28 +14,7 @@ Gio.resources_register(resource);
 
 const { MetricsService } = await import('../lib/metricsService.js');
 const { AiConsumptionPrefsPage } = await import('../prefs.js');
-
-function formatTokens(count) {
-    if (!count || count <= 0) return '0';
-    if (count >= 1000000000) return (count / 1000000000).toFixed(2) + 'B';
-    if (count >= 1000000) return (count / 1000000).toFixed(1) + 'M';
-    if (count >= 1000) return (count / 1000).toFixed(1) + 'k';
-    return count.toString();
-}
-
-function formatResetTime(isoStr) {
-    if (!isoStr) return 'Live metrics';
-    const d = new Date(isoStr);
-    if (isNaN(d.getTime())) return 'Live metrics';
-    const now = new Date();
-    const isToday = d.toDateString() === now.toDateString();
-    const timePart = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    if (isToday) {
-        return `Resets Today at ${timePart}`;
-    }
-    const dayName = d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-    return `Resets ${dayName} at ${timePart}`;
-}
+const { buildClaudeCards, buildGeminiCards, buildPanelState } = await import('../lib/viewModel.js');
 
 function detectBlurExtension() {
     try {
@@ -374,21 +353,22 @@ function createProgressBar(percentUsed, colorVariant = 'green') {
     return track;
 }
 
-function createCard({
-    iconType = null,
-    title,
-    subtitle,
-    rightText,
-    rightColor = 'green',
-    percent = 0,
-    barColor = 'green',
-    bottomRightText = null,
-    insetLeftTitle = null,
-    insetLeftValue = null,
-    insetRightTitle = null,
-    insetRightValue = null,
-    isGreenCard = false,
-}) {
+function createCard(desc) {
+    const {
+        icon: iconType = null,
+        title,
+        subtitle,
+        value: rightText,
+        severity = 'green',
+        percent = null,
+        footer: bottomRightText = null,
+        highlight: isGreenCard = false,
+    } = desc;
+    const rightColor = severity === 'neutral' ? 'green' : severity;
+    const barColor = severity === 'neutral' ? 'blue' : severity;
+    const [insetLeft, insetRight] = desc.stats || [];
+    const insetLeftTitle = insetLeft?.label, insetLeftValue = insetLeft?.value;
+    const insetRightTitle = insetRight?.label, insetRightValue = insetRight?.value;
     const card = new Gtk.Box({
         orientation: Gtk.Orientation.VERTICAL,
         spacing: 8,
@@ -439,7 +419,7 @@ function createCard({
     topRow.append(pctLabel);
 
     card.append(topRow);
-    card.append(createProgressBar(percent, barColor));
+    if (percent !== null) card.append(createProgressBar(percent, barColor));
 
     if (bottomRightText) {
         const resetRow = new Gtk.Box({
@@ -690,128 +670,15 @@ app.connect('activate', () => {
             child = next;
         }
 
-        const data = latestData || {};
-        const claude = data.claude || {};
-        const claudeOAuth = claude.oauth_quota || {};
-        const ag = data.antigravity || {};
-        const agOAuth = ag.oauth_quota || {};
-
-        const fiveH = claudeOAuth.five_hour || { used_percent: 0, remaining_percent: 100, resets_at: '' };
-        const sevenD = claudeOAuth.seven_day || { used_percent: 0, remaining_percent: 100, resets_at: '' };
-        const extra = claudeOAuth.extra_usage || { used_percent: 0, used_dollars: 0, limit_dollars: 100 };
-        const geminiQ = agOAuth.gemini || { model_name: 'Gemini 2.5 & 3.1 Pro', used_percent: 0, remaining_percent: 100, resets_at: '' };
-        const ag3p5h = agOAuth.third_party_5h || { used_percent: 0, remaining_percent: 100, resets_at: '' };
-        const ag3pWk = agOAuth.third_party_weekly || { used_percent: 0, remaining_percent: 100, resets_at: '' };
-
-        const claudeTokensToday = formatTokens(claude.today?.total_tokens || 0);
-        const agStepsToday = `${ag.today?.steps || 0} steps`;
-
-        if (activeTab === 'claude') {
-            const c5Pct = Math.round(fiveH.used_percent || 0);
-            const c5Color = c5Pct >= 80 ? 'red' : (c5Pct >= 55 ? 'orange' : 'green');
-            const c5Prefix = c5Pct >= 55 ? '⚠' : '✓';
-            cardsBox.append(createCard({
-                iconType: 'claude',
-                title: `Claude ${claudeOAuth.plan_label || 'Pro'}`,
-                subtitle: `5-hour rolling session · ${Math.round(fiveH.remaining_percent ?? 100)}% left`,
-                rightText: `${c5Prefix} ${c5Pct}%`,
-                rightColor: c5Color,
-                percent: c5Pct,
-                barColor: c5Color,
-                bottomRightText: formatResetTime(fiveH.resets_at),
-            }));
-
-            const wPct = Math.round(sevenD.used_percent || 0);
-            const wPrefix = wPct >= 50 ? '⚠' : '✓';
-            cardsBox.append(createCard({
-                iconType: 'claude',
-                title: 'Claude Weekly Quota',
-                subtitle: `7-day rolling window · ${Math.round(sevenD.remaining_percent ?? 100)}% left`,
-                rightText: `${wPrefix} ${wPct}%`,
-                rightColor: 'orange',
-                percent: wPct,
-                barColor: 'orange',
-                bottomRightText: formatResetTime(sevenD.resets_at),
-            }));
-
-            const exPct = Math.round(extra.used_percent || 0);
-            cardsBox.append(createCard({
-                title: 'Promotional & Extra Credits',
-                subtitle: 'Pay-as-you-go & promotional grant',
-                rightText: `${exPct >= 90 ? '⚠' : '✓'} ${exPct}%`,
-                rightColor: exPct >= 90 ? 'orange' : 'green',
-                percent: exPct,
-                barColor: 'orange',
-                bottomRightText: `$${(extra.used_dollars || 0).toFixed(2)} / $${(extra.limit_dollars || 100).toFixed(2)} USD`,
-            }));
-
-            const inTok = formatTokens(claude.today?.input_tokens || 0);
-            const outTok = formatTokens(claude.today?.output_tokens || 0);
-            const cacheTok = formatTokens((claude.today?.cache_creation_tokens || 0) + (claude.today?.cache_read_tokens || 0));
-            cardsBox.append(createCard({
-                title: 'Local Claude CLI Telemetry',
-                subtitle: `In: ${inTok} · Out: ${outTok} · Cache: ${cacheTok}`,
-                rightText: `${claudeTokensToday} tok`,
-                rightColor: 'green',
-                percent: 35,
-                barColor: 'green',
-                insetLeftTitle: 'Today Messages',
-                insetLeftValue: `${claude.today?.messages || 0} msgs`,
-                insetRightTitle: 'Lifetime Tokens',
-                insetRightValue: formatTokens(claude.lifetime?.total_tokens || 0),
-                isGreenCard: true,
-            }));
-        } else if (activeTab === 'gemini') {
-            const gemPct = Math.round(geminiQ.used_percent || 0);
-            cardsBox.append(createCard({
-                iconType: 'gemini',
-                title: 'Gemini 2.5 & 3.1 Pro',
-                subtitle: `Google Antigravity daily · ${Math.round(geminiQ.remaining_percent ?? 100)}% left`,
-                rightText: `✓ ${gemPct}%`,
-                rightColor: 'green',
-                percent: gemPct,
-                barColor: 'blue',
-                bottomRightText: formatResetTime(geminiQ.resets_at),
-            }));
-
-            const p5Pct = Math.round(ag3p5h.used_percent || 0);
-            cardsBox.append(createCard({
-                iconType: 'claude',
-                title: 'Antigravity 3P (Claude/GPT) 5h',
-                subtitle: 'Claude Opus 4.5, Sonnet 4.5, GPT-OSS',
-                rightText: `✓ ${p5Pct}%`,
-                rightColor: 'green',
-                percent: p5Pct,
-                barColor: 'green',
-                bottomRightText: formatResetTime(ag3p5h.resets_at),
-            }));
-
-            const pWkPct = Math.round(ag3pWk.used_percent || 0);
-            cardsBox.append(createCard({
-                iconType: 'gemini',
-                title: 'Antigravity 3P Weekly Window',
-                subtitle: 'Shared weekly tier limit',
-                rightText: `✓ ${pWkPct}%`,
-                rightColor: 'green',
-                percent: pWkPct,
-                barColor: 'blue',
-                bottomRightText: formatResetTime(ag3pWk.resets_at),
-            }));
-
-            cardsBox.append(createCard({
-                title: 'Antigravity Local Activity',
-                subtitle: `Latest: ${ag.active_sessions?.[0]?.title || 'None'}`,
-                rightText: agStepsToday,
-                rightColor: 'green',
-                percent: Math.min(100, Math.round(((ag.today?.steps || 0) / 1000) * 100)),
-                barColor: 'green',
-                insetLeftTitle: 'Today Steps',
-                insetLeftValue: agStepsToday,
-                insetRightTitle: 'Lifetime Steps',
-                insetRightValue: `${ag.lifetime?.steps || 0} steps`,
-                isGreenCard: true,
-            }));
-        }
+        const opts = {
+            warningPercent: settings.get_int('quota-warning-percent'),
+            tokenThreshold: settings.get_int('claude-token-daily-threshold'),
+            stepThreshold: settings.get_int('antigravity-step-daily-threshold'),
+        };
+        const cards = activeTab === 'gemini'
+            ? buildGeminiCards(latestData, opts)
+            : buildClaudeCards(latestData, opts);
+        for (const desc of cards) cardsBox.append(createCard(desc));
     };
 
     const tabs = [
@@ -848,7 +715,7 @@ app.connect('activate', () => {
     popupContainer.append(tabBar);
     popupContainer.append(cardsBox);
 
-    // Footer Row: Settings & Quit
+    // Footer Row: Settings
     const footerRow = new Gtk.Box({
         orientation: Gtk.Orientation.HORIZONTAL,
         hexpand: true,
@@ -872,15 +739,6 @@ app.connect('activate', () => {
     footerRow.append(prefsBtn);
 
     footerRow.append(new Gtk.Box({ hexpand: true }));
-
-    const quitBtn = new Gtk.Button({
-        label: '⏻  Quit',
-        css_classes: ['ai-usage-quit-btn'],
-    });
-    quitBtn.connect('clicked', () => {
-        win.close();
-    });
-    footerRow.append(quitBtn);
 
     popupContainer.append(footerRow);
 
@@ -912,29 +770,18 @@ app.connect('activate', () => {
         if (!data) return;
         latestData = data;
 
-        const mode = settings.get_string('display-mode') || 'sessions';
-        const claudeTokens = data.claude?.today?.total_tokens || 0;
-        const agSteps = data.antigravity?.today?.steps || 0;
-
-        const fiveHUsed = data.claude?.oauth_quota?.five_hour?.used_percent ?? 0;
-        const sevenDUsed = data.claude?.oauth_quota?.seven_day?.used_percent ?? 0;
-        const geminiUsed = data.antigravity?.oauth_quota?.gemini?.used_percent ?? 0;
-
-        if (fiveHUsed >= 85 || sevenDUsed >= 85 || geminiUsed >= 85) {
-            statusDot.set_css_classes(['ai-usage-status-dot', 'ai-usage-status-dot-warn']);
-            btnLabel.add_css_class('panel-warning');
-        } else {
-            statusDot.set_css_classes(['ai-usage-status-dot']);
-            btnLabel.remove_css_class('panel-warning');
-        }
-
-        if (mode === 'tokens') {
-            btnLabel.label = `${formatTokens(claudeTokens)} tok | ${agSteps} stp`;
-        } else if (mode === 'compact') {
-            btnLabel.label = `${Math.round(fiveHUsed)}% · ${Math.round(geminiUsed)}%`;
-        } else {
-            btnLabel.label = `Claude ${Math.round(fiveHUsed)}% · AGY ${Math.round(geminiUsed)}%`;
-        }
+        const state = buildPanelState(data, {
+            mode: settings.get_string('display-mode'),
+            warningPercent: settings.get_int('quota-warning-percent'),
+            tokenThreshold: settings.get_int('claude-token-daily-threshold'),
+            stepThreshold: settings.get_int('antigravity-step-daily-threshold'),
+        });
+        statusDot.set_css_classes(state.quotaWarning
+            ? ['ai-usage-status-dot', 'ai-usage-status-dot-warn']
+            : ['ai-usage-status-dot']);
+        if (state.warning) btnLabel.add_css_class('panel-warning');
+        else btnLabel.remove_css_class('panel-warning');
+        btnLabel.label = state.text;
 
         renderCards();
     };

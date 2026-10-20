@@ -1,4 +1,8 @@
-/* Top Panel Indicator (no icon, clean GNOME pill label) */
+/* Base + dark variant. Text colors are inherited from the shell theme's
+   .popup-menu so the menu follows dark/light styles; stylesheet-light.css
+   overrides only the translucent overlays and severity colors. */
+
+/* Top Panel Indicator */
 .ai-consumption-panel-box {
     spacing: 0px;
     padding: 0 4px;
@@ -10,19 +14,13 @@
 }
 
 .ai-consumption-warning-label {
-    color: #f59e0b;
+    color: #ffa348;
 }
 
-.ai-consumption-alert-label {
-    color: #ef4444;
-}
-
-/* Native GNOME Popup Menu & Blur Support */
+/* Popup menu (theme background unless blur is active) */
 .popup-menu-content.ai-usage-popup-menu {
     padding: 16px;
     border-radius: 26px;
-    background-color: #303034;
-    border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .popup-menu-content.ai-usage-popup-menu.ai-usage-blur-active {
@@ -31,14 +29,12 @@
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
 }
 
-/* Popup Menu Container */
 .ai-usage-popup-container {
     width: 348px;
     spacing: 12px;
-    background-color: transparent;
 }
 
-/* Header Row */
+/* Header */
 .ai-usage-header-row {
     spacing: 8px;
     padding: 0 2px;
@@ -47,40 +43,33 @@
 .ai-usage-title {
     font-size: 13.5pt;
     font-weight: 800;
-    color: #ffffff;
 }
 
-/* Status Dot (only dot, no text) */
 .ai-usage-status-dot {
-    color: #34d399;
-    font-size: 11pt;
-    padding: 0 4px;
+    width: 9px;
+    height: 9px;
+    border-radius: 5px;
+    margin: 0 4px;
+    background-color: rgba(255, 255, 255, 0.35);
 }
 
-.ai-usage-status-dot-warn {
-    color: #fbbf24;
-}
-
-.ai-usage-status-dot-refresh {
-    color: #60a5fa;
-}
+.ai-usage-status-dot-ok { background-color: #33d17a; }
+.ai-usage-status-dot-warn { background-color: #ffa348; }
+.ai-usage-status-dot-refresh { background-color: #62a0ea; }
+.ai-usage-status-dot-error { background-color: #ff7b63; }
 
 .ai-usage-refresh-btn {
     background-color: rgba(255, 255, 255, 0.1);
-    color: #f6f5f4;
     border-radius: 99px;
-    width: 32px;
-    height: 32px;
-    font-size: 11pt;
-    font-weight: bold;
+    padding: 8px;
 }
 
-.ai-usage-refresh-btn:hover {
+.ai-usage-refresh-btn:hover,
+.ai-usage-refresh-btn:focus {
     background-color: rgba(255, 255, 255, 0.18);
-    color: #ffffff;
 }
 
-/* GNOME Segmented Tab Bar (Claude | Gemini) */
+/* Segmented tab bar */
 .ai-usage-tab-bar {
     background-color: rgba(0, 0, 0, 0.26);
     border: 1px solid rgba(255, 255, 255, 0.06);
@@ -94,22 +83,21 @@
     padding: 6px 14px;
     font-size: 9.5pt;
     font-weight: 700;
-    color: rgba(255, 255, 255, 0.65);
     background-color: transparent;
 }
 
-.ai-usage-tab-btn:hover {
-    color: #ffffff;
+.ai-usage-tab-btn:hover,
+.ai-usage-tab-btn:focus {
     background-color: rgba(255, 255, 255, 0.06);
 }
 
-.ai-usage-tab-btn-active {
+.ai-usage-tab-btn-active,
+.ai-usage-tab-btn-active:hover {
     background-color: rgba(255, 255, 255, 0.15);
-    color: #ffffff;
     font-weight: 800;
 }
 
-/* Usage Cards (GNOME Quick Settings translucent card style) */
+/* Cards */
 .ai-usage-cards-box {
     spacing: 10px;
 }
@@ -122,126 +110,88 @@
     spacing: 8px;
 }
 
-.ai-usage-blur-active .ai-usage-card {
-    background-color: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+.ai-usage-card-highlight {
+    background-color: rgba(51, 209, 122, 0.12);
+    border-color: rgba(51, 209, 122, 0.25);
 }
 
-.ai-usage-card-green {
-    background-color: rgba(16, 185, 129, 0.12);
-    border: 1px solid rgba(52, 211, 153, 0.25);
-    border-radius: 16px;
-    padding: 12px 14px;
-    spacing: 8px;
-}
-
-/* Sparkle Icon Badges */
-.ai-usage-icon-claude {
-    background-color: rgba(224, 122, 95, 0.2);
-    color: #f48c6c;
+.ai-usage-icon {
     border-radius: 12px;
     width: 34px;
     height: 34px;
-    font-size: 13pt;
-    font-weight: bold;
     margin-right: 10px;
+}
+
+.ai-usage-icon-claude {
+    background-color: rgba(224, 122, 95, 0.2);
+    color: #f48c6c;
 }
 
 .ai-usage-icon-gemini {
     background-color: rgba(59, 130, 246, 0.22);
-    color: #60a5fa;
-    border-radius: 12px;
-    width: 34px;
-    height: 34px;
-    font-size: 13pt;
-    font-weight: bold;
-    margin-right: 10px;
+    color: #62a0ea;
 }
 
 .ai-usage-card-title {
     font-size: 10.5pt;
     font-weight: 700;
-    color: #ffffff;
 }
 
-.ai-usage-card-subtitle {
-    font-size: 8.8pt;
+.ai-usage-card-subtitle,
+.ai-usage-reset-text,
+.ai-usage-stat-caption,
+.ai-usage-updated-text {
     color: rgba(255, 255, 255, 0.6);
 }
 
-.ai-usage-pct-green {
+.ai-usage-card-subtitle { font-size: 8.8pt; }
+.ai-usage-reset-text,
+.ai-usage-stat-caption,
+.ai-usage-updated-text { font-size: 8.5pt; }
+
+.ai-usage-value {
     font-size: 10.5pt;
     font-weight: 800;
-    color: #34d399;
+    spacing: 4px;
 }
 
-.ai-usage-pct-orange {
-    font-size: 10.5pt;
-    font-weight: 800;
-    color: #fbbf24;
-}
+.ai-usage-value-icon { icon-size: 14px; }
 
-.ai-usage-pct-red {
-    font-size: 10.5pt;
-    font-weight: 800;
-    color: #f87171;
-}
+.ai-usage-pct-green { color: #33d17a; }
+.ai-usage-pct-orange { color: #ffa348; }
+.ai-usage-pct-red { color: #ff7b63; }
+.ai-usage-pct-neutral { color: rgba(255, 255, 255, 0.6); }
 
-/* Progress Bar */
+/* Progress bar */
 .ai-usage-progress-track {
     height: 6px;
     border-radius: 3px;
     background-color: rgba(255, 255, 255, 0.13);
 }
 
-.ai-usage-progress-fill-green {
+.ai-usage-progress-fill {
     height: 6px;
     border-radius: 3px;
-    background-color: #34d399;
 }
 
-.ai-usage-progress-fill-blue {
-    height: 6px;
-    border-radius: 3px;
-    background-color: #60a5fa;
-}
+.ai-usage-progress-fill-green { background-color: #33d17a; }
+.ai-usage-progress-fill-orange { background-color: #ffa348; }
+.ai-usage-progress-fill-red { background-color: #ff7b63; }
+.ai-usage-progress-fill-neutral { background-color: #62a0ea; }
 
-.ai-usage-progress-fill-orange {
-    height: 6px;
-    border-radius: 3px;
-    background-color: #fbbf24;
-}
-
-.ai-usage-progress-fill-red {
-    height: 6px;
-    border-radius: 3px;
-    background-color: #f87171;
-}
-
-.ai-usage-reset-text {
-    font-size: 8.5pt;
-    color: rgba(255, 255, 255, 0.55);
-}
-
-/* Inset Sub-box */
+/* Stats inset */
 .ai-usage-inset-box {
     background-color: rgba(0, 0, 0, 0.22);
     border-radius: 12px;
     padding: 8px 12px;
 }
 
-.ai-usage-stat-caption {
-    font-size: 8.5pt;
-    color: rgba(255, 255, 255, 0.58);
-}
-
 .ai-usage-stat-big {
     font-size: 10.5pt;
     font-weight: 800;
-    color: #ffffff;
 }
 
-/* Footer Row */
+/* Footer */
 .ai-usage-footer-row {
     padding-top: 2px;
 }
@@ -251,24 +201,14 @@
     border-radius: 99px;
     font-size: 9.5pt;
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.85);
     background-color: rgba(255, 255, 255, 0.07);
 }
 
-.ai-usage-footer-btn:hover {
+.ai-usage-footer-btn-box {
+    spacing: 6px;
+}
+
+.ai-usage-footer-btn:hover,
+.ai-usage-footer-btn:focus {
     background-color: rgba(255, 255, 255, 0.15);
-    color: #ffffff;
-}
-
-.ai-usage-quit-btn {
-    padding: 6px 12px;
-    border-radius: 99px;
-    font-size: 9.5pt;
-    font-weight: 600;
-    color: #fca5a5;
-    background-color: rgba(239, 68, 68, 0.12);
-}
-
-.ai-usage-quit-btn:hover {
-    background-color: rgba(239, 68, 68, 0.22);
 }

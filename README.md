@@ -14,7 +14,7 @@ Monitors real-time Claude Code and Google Antigravity / Gemini quota percentages
 
 #### Pack & Install
 ```bash
-gnome-extensions pack ai-consumption-extension --force --extra-source=lib -o ai-consumption-extension
+gnome-extensions pack ai-consumption-extension --force --extra-source=lib --extra-source=stylesheet-light.css -o ai-consumption-extension
 gnome-extensions install --force ai-consumption-extension/ai-consumption-monitor@omarjayg.shell-extension.zip
 gnome-extensions enable ai-consumption-monitor@omarjayg
 ```
@@ -22,5 +22,6 @@ gnome-extensions enable ai-consumption-monitor@omarjayg
 #### Local Simulator & Tests
 ```bash
 python3 -B -m unittest discover -s ai-consumption-extension/tests
-cd ai-consumption-extension && gjs -m tests/run_topbar.js
+cd ai-consumption-extension && gjs -m tests/test_viewmodel.js
+gjs -m tests/run_topbar.js   # GTK simulator window
 ```

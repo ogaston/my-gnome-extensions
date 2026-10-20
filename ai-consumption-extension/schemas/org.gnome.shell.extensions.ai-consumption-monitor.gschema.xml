@@ -21,6 +21,12 @@
       <summary>Daily Antigravity step count warning threshold</summary>
       <description>Threshold for daily Antigravity steps before showing warning styling (0 disables).</description>
     </key>
+    <key name="quota-warning-percent" type="i">
+      <range min="1" max="100"/>
+      <default>85</default>
+      <summary>Quota warning percentage</summary>
+      <description>Quota usage percentage at which cards turn red and the panel shows warning styling. Cards turn orange at about two thirds of this value.</description>
+    </key>
     <key name="claude-path-override" type="s">
       <default>''</default>
       <summary>Claude directory path override</summary>

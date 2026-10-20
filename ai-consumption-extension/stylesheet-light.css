@@ -1,0 +1,66 @@
+/* Light style variant (loaded instead of stylesheet.css by GNOME Shell 47+). */
+@import url("stylesheet.css");
+
+.ai-consumption-warning-label { color: #c64600; }
+
+.popup-menu-content.ai-usage-popup-menu.ai-usage-blur-active {
+    background-color: rgba(250, 250, 251, 0.62);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+
+.ai-usage-status-dot { background-color: rgba(0, 0, 0, 0.3); }
+.ai-usage-status-dot-ok { background-color: #26a269; }
+.ai-usage-status-dot-warn { background-color: #e66100; }
+.ai-usage-status-dot-refresh { background-color: #3584e4; }
+.ai-usage-status-dot-error { background-color: #c01c28; }
+
+.ai-usage-refresh-btn { background-color: rgba(0, 0, 0, 0.06); }
+.ai-usage-refresh-btn:hover,
+.ai-usage-refresh-btn:focus { background-color: rgba(0, 0, 0, 0.12); }
+
+.ai-usage-tab-bar {
+    background-color: rgba(0, 0, 0, 0.06);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+}
+.ai-usage-tab-btn:hover,
+.ai-usage-tab-btn:focus { background-color: rgba(0, 0, 0, 0.05); }
+.ai-usage-tab-btn-active,
+.ai-usage-tab-btn-active:hover {
+    background-color: #ffffff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+.ai-usage-card {
+    background-color: rgba(0, 0, 0, 0.04);
+    border: 1px solid rgba(0, 0, 0, 0.07);
+}
+.ai-usage-card-highlight {
+    background-color: rgba(38, 162, 105, 0.1);
+    border-color: rgba(38, 162, 105, 0.3);
+}
+
+.ai-usage-icon-claude { background-color: rgba(224, 122, 95, 0.18); color: #c4461f; }
+.ai-usage-icon-gemini { background-color: rgba(53, 132, 228, 0.16); color: #1c71d8; }
+
+.ai-usage-card-subtitle,
+.ai-usage-reset-text,
+.ai-usage-stat-caption,
+.ai-usage-updated-text { color: rgba(0, 0, 0, 0.6); }
+
+.ai-usage-pct-green { color: #1f7a4c; }
+.ai-usage-pct-orange { color: #b54d00; }
+.ai-usage-pct-red { color: #c01c28; }
+.ai-usage-pct-neutral { color: rgba(0, 0, 0, 0.55); }
+
+.ai-usage-progress-track { background-color: rgba(0, 0, 0, 0.1); }
+.ai-usage-progress-fill-green { background-color: #26a269; }
+.ai-usage-progress-fill-orange { background-color: #e66100; }
+.ai-usage-progress-fill-red { background-color: #c01c28; }
+.ai-usage-progress-fill-neutral { background-color: #3584e4; }
+
+.ai-usage-inset-box { background-color: rgba(0, 0, 0, 0.05); }
+
+.ai-usage-footer-btn { background-color: rgba(0, 0, 0, 0.05); }
+.ai-usage-footer-btn:hover,
+.ai-usage-footer-btn:focus { background-color: rgba(0, 0, 0, 0.1); }
