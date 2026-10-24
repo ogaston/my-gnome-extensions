@@ -297,6 +297,44 @@ class TestCollector(unittest.TestCase):
         self.assertEqual(res["today"]["steps"], 8)
         self.assertEqual(res["lifetime"]["steps"], 15)
 
+    def test_antigravity_placeholder_year_one_row(self):
+        # Antigravity keeps a 0001-01-01 UTC placeholder row; converting it to a
+        # negative-offset zone overflows and used to abort the whole DB read.
+        self._use_timezone("America/Bogota")
+        ag_dir = os.path.join(self.test_dir, "antigravity-cli")
+        os.makedirs(ag_dir, exist_ok=True)
+        con = sqlite3.connect(os.path.join(ag_dir, "conversation_summaries.db"))
+        con.execute("""
+            CREATE TABLE conversation_summaries (
+                conversation_id text PRIMARY KEY, title text, workspace_uris text,
+                step_count integer, last_modified_time datetime, not_fully_idle numeric
+            )
+        """)
+        con.executemany("INSERT INTO conversation_summaries VALUES (?, ?, '', ?, ?, 0)", [
+            ("placeholder", "", 0, "0001-01-01 00:00:00+00:00"),
+            ("today", "Recent chat", 4, "2026-10-20 15:27:23.0099021+00:00"),
+        ])
+        con.commit()
+        con.close()
+
+        self.assertEqual(collector.to_local_date("0001-01-01 00:00:00+00:00"), "")
+        res = collector.collect_antigravity_metrics(ag_dir, "2026-10-20")
+        self.assertEqual(res["status"], "ok")
+        self.assertEqual(res["today"]["conversations"], 1)
+        self.assertEqual(res["today"]["steps"], 4)
+        self.assertEqual(res["active_sessions"][0]["title"], "Recent chat")
+
+    def test_disabled_providers_skip_collection(self):
+        claude_dir = os.path.join(self.test_dir, ".claude")
+        ag_dir = os.path.join(self.test_dir, "antigravity-cli")
+        os.makedirs(claude_dir)
+        os.makedirs(ag_dir)
+        claude_res = collector.collect_claude_metrics(claude_dir, {}, self.today_str, disabled=True)
+        ag_res = collector.collect_antigravity_metrics(ag_dir, self.today_str, cache={}, disabled=True)
+        self.assertEqual(claude_res["status"], "disabled")
+        self.assertEqual(ag_res["status"], "disabled")
+        self.assertEqual(ag_res["oauth_quota"], {})
+
     def test_save_cache_private_and_atomic(self):
         cache_path = os.path.join(self.test_dir, "cache-dir", "cache.json")
         collector.save_cache(cache_path, {"a": 1})

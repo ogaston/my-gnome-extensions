@@ -27,6 +27,8 @@ def parse_args():
     parser.add_argument("--cache-file", default="", help="Path to cache file for incremental parsing")
     parser.add_argument("--reset-cache", action="store_true", help="Force re-reading all files and APIs")
     parser.add_argument("--skip-network", action="store_true", help="Skip live OAuth quota API requests")
+    parser.add_argument("--skip-claude", action="store_true", help="Do not collect Claude Code metrics")
+    parser.add_argument("--skip-antigravity", action="store_true", help="Do not collect Antigravity metrics")
     return parser.parse_args()
 
 
@@ -44,10 +46,12 @@ def to_local_date(ts):
     s = re.sub(r"(\.\d{6})\d+", r"\1", s)
     try:
         dt = datetime.datetime.fromisoformat(s)
-    except ValueError:
+        if dt.tzinfo is not None:
+            dt = dt.astimezone()
+    # Antigravity stores placeholder rows dated 0001-01-01 UTC, which overflow
+    # when shifted into a negative-offset local zone.
+    except (ValueError, OverflowError):
         return ""
-    if dt.tzinfo is not None:
-        dt = dt.astimezone()
     return dt.date().isoformat()
 
 
@@ -273,7 +277,7 @@ def _collect_today(today_by_key, entries, today_str, file_path):
             today_by_key[k] = e
 
 
-def collect_claude_metrics(claude_dir, cache, today_str, skip_network=False, force_refresh=False):
+def collect_claude_metrics(claude_dir, cache, today_str, skip_network=False, force_refresh=False, disabled=False):
     res = {
         "active_sessions": [],
         "active_count": 0,
@@ -293,6 +297,10 @@ def collect_claude_metrics(claude_dir, cache, today_str, skip_network=False, for
         "oauth_quota": {},
         "status": "ok"
     }
+
+    if disabled:
+        res["status"] = "disabled"
+        return res
 
     if not os.path.isdir(claude_dir):
         res["status"] = "not_found"
@@ -530,7 +538,8 @@ def fetch_antigravity_oauth_quota(ag_dir, cache, force_refresh=False):
         return cached_ag.get("data", {}) if cached_ag else result
 
 
-def collect_antigravity_metrics(ag_dir, today_str, cache=None, skip_network=False, force_refresh=False):
+def collect_antigravity_metrics(ag_dir, today_str, cache=None, skip_network=False, force_refresh=False,
+                                disabled=False):
     res = {
         "active_sessions": [],
         "active_count": 0,
@@ -550,6 +559,10 @@ def collect_antigravity_metrics(ag_dir, today_str, cache=None, skip_network=Fals
         "oauth_quota": {},
         "status": "ok"
     }
+
+    if disabled:
+        res["status"] = "disabled"
+        return res
 
     if not os.path.isdir(ag_dir):
         res["status"] = "not_found"
@@ -658,12 +671,14 @@ def main():
     claude_data = collect_claude_metrics(
         claude_dir, cache, today_str,
         skip_network=args.skip_network,
-        force_refresh=args.reset_cache
+        force_refresh=args.reset_cache,
+        disabled=args.skip_claude
     )
     ag_data = collect_antigravity_metrics(
         ag_dir, today_str, cache=cache,
         skip_network=args.skip_network,
-        force_refresh=args.reset_cache
+        force_refresh=args.reset_cache,
+        disabled=args.skip_antigravity
     )
 
     try:

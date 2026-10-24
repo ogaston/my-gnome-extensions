@@ -22,14 +22,18 @@ export const MetricsService = GObject.registerClass({
         this._intervalSeconds = 30;
         this._claudePath = '';
         this._antigravityPath = '';
+        this._showClaude = true;
+        this._showAntigravity = true;
         this._cancellable = null;
         this._latestData = null;
     }
 
-    configure(intervalSeconds, claudePath = '', antigravityPath = '') {
+    configure(intervalSeconds, claudePath = '', antigravityPath = '', showClaude = true, showAntigravity = true) {
         this._intervalSeconds = Math.max(5, intervalSeconds);
         this._claudePath = claudePath || '';
         this._antigravityPath = antigravityPath || '';
+        this._showClaude = showClaude;
+        this._showAntigravity = showAntigravity;
     }
 
     start() {
@@ -85,6 +89,12 @@ export const MetricsService = GObject.registerClass({
         }
         if (this._antigravityPath) {
             cmd.push('--antigravity-dir', this._antigravityPath);
+        }
+        if (!this._showClaude) {
+            cmd.push('--skip-claude');
+        }
+        if (!this._showAntigravity) {
+            cmd.push('--skip-antigravity');
         }
 
         try {

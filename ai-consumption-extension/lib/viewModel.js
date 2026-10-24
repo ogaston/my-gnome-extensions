@@ -13,7 +13,7 @@ function fmt(str, ...args) {
     return str.replace(/%s/g, () => String(args[i++]));
 }
 
-export const DEFAULT_WARNING_PERCENT = 85;
+export const DEFAULT_WARNING_PERCENT = 75;
 
 export function formatTokens(count) {
     if (!count || count <= 0) return '0';
@@ -211,7 +211,9 @@ export function buildGeminiCards(data, opts = {}) {
     cards.push({
         icon: null,
         title: _('Local Antigravity activity'),
-        subtitle: fmt(_('Latest: %s'), ag.active_sessions?.[0]?.title || _('none')),
+        subtitle: ag.active_sessions?.[0]?.title
+            ? fmt(_('Latest: %s'), ag.active_sessions[0].title)
+            : _('No recent conversations'),
         value: fmt(_('%s steps'), steps),
         severity: barPct === null ? 'neutral' : severity(barPct, 100),
         percent: barPct,
@@ -225,6 +227,25 @@ export function buildGeminiCards(data, opts = {}) {
     return cards;
 }
 
+// A provider is shown unless the user hid it in settings or the collector skipped it.
+export function visibleProviders(data, opts = {}) {
+    return {
+        claude: (opts.showClaude ?? true) && data?.claude?.status !== 'disabled',
+        antigravity: (opts.showAntigravity ?? true) && data?.antigravity?.status !== 'disabled',
+    };
+}
+
+// Live quota windows that count toward the warning state, limited to visible providers.
+export function visibleQuotaBuckets(data, opts = {}) {
+    const visible = visibleProviders(data, opts);
+    const buckets = [];
+    if (visible.claude) {
+        buckets.push(data?.claude?.oauth_quota?.five_hour, data?.claude?.oauth_quota?.seven_day);
+    }
+    if (visible.antigravity) buckets.push(data?.antigravity?.oauth_quota?.gemini);
+    return buckets;
+}
+
 function pctText(bucket) {
     return hasQuota(bucket) ? `${Math.round(bucket.used_percent)}%` : '--%';
 }
@@ -232,24 +253,20 @@ function pctText(bucket) {
 export function buildPanelState(data, opts = {}) {
     const mode = opts.mode || 'sessions';
     const warningPercent = opts.warningPercent ?? DEFAULT_WARNING_PERCENT;
-    const tokenThreshold = opts.tokenThreshold ?? 0;
-    const stepThreshold = opts.stepThreshold ?? 0;
 
     const claude = data?.claude || {};
     const ag = data?.antigravity || {};
-    const showClaude = claude.status !== 'not_found';
-    const showAg = ag.status !== 'not_found';
+    const visible = visibleProviders(data, opts);
+    const showClaude = visible.claude && claude.status !== 'not_found';
+    const showAg = visible.antigravity && ag.status !== 'not_found';
     const fiveH = claude.oauth_quota?.five_hour;
-    const sevenD = claude.oauth_quota?.seven_day;
     const gemini = ag.oauth_quota?.gemini;
     const claudeTokens = claude.today?.total_tokens || 0;
     const agSteps = ag.today?.steps || 0;
 
-    const quotaHot = [fiveH, sevenD, gemini].some(b => hasQuota(b) && b.used_percent >= warningPercent);
-    const warning = quotaHot ||
-        (showClaude && tokenThreshold > 0 && claudeTokens >= tokenThreshold) ||
-        (showAg && stepThreshold > 0 && agSteps >= stepThreshold) ||
-        ag.quota?.status === 'warning';
+    // Only live quota limits color the panel; daily token/step alerts stay in the popup cards.
+    const warning = visibleQuotaBuckets(data, opts)
+        .some(b => hasQuota(b) && b.used_percent >= warningPercent);
 
     const parts = [];
     if (mode === 'tokens') {
@@ -266,6 +283,5 @@ export function buildPanelState(data, opts = {}) {
     return {
         text: parts.length ? parts.join(' · ') : _('AI --'),
         warning,
-        quotaWarning: quotaHot,
     };
 }

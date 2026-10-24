@@ -773,10 +773,10 @@ app.connect('activate', () => {
         const state = buildPanelState(data, {
             mode: settings.get_string('display-mode'),
             warningPercent: settings.get_int('quota-warning-percent'),
-            tokenThreshold: settings.get_int('claude-token-daily-threshold'),
-            stepThreshold: settings.get_int('antigravity-step-daily-threshold'),
+            showClaude: settings.get_boolean('show-claude'),
+            showAntigravity: settings.get_boolean('show-antigravity'),
         });
-        statusDot.set_css_classes(state.quotaWarning
+        statusDot.set_css_classes(state.warning
             ? ['ai-usage-status-dot', 'ai-usage-status-dot-warn']
             : ['ai-usage-status-dot']);
         if (state.warning) btnLabel.add_css_class('panel-warning');
