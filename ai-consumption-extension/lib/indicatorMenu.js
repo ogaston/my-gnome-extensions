@@ -11,6 +11,8 @@ import {
     buildGeminiCards,
     formatUpdatedAgo,
     setGettext,
+    visibleProviders,
+    visibleQuotaBuckets,
 } from './viewModel.js';
 
 const BLUR_UUID = 'blur-my-shell@aunetx';
@@ -138,7 +140,7 @@ export class IndicatorMenuManager {
         this._rootBox.add_child(headerRow);
 
         // 2. Segmented Tab Bar: Claude | Antigravity
-        const tabBar = new St.BoxLayout({
+        const tabBar = this._tabBar = new St.BoxLayout({
             style_class: 'ai-usage-tab-bar',
             x_expand: true,
         });
@@ -226,6 +228,8 @@ export class IndicatorMenuManager {
             warningPercent: this._settings.get_int('quota-warning-percent'),
             tokenThreshold: this._settings.get_int('claude-token-daily-threshold'),
             stepThreshold: this._settings.get_int('antigravity-step-daily-threshold'),
+            showClaude: this._settings.get_boolean('show-claude'),
+            showAntigravity: this._settings.get_boolean('show-antigravity'),
         };
     }
 
@@ -245,13 +249,10 @@ export class IndicatorMenuManager {
             this._updatedLabel.text = '';
             return;
         }
-        const { warningPercent } = this._cardOptions();
+        const opts = this._cardOptions();
         const data = this._latestData;
-        const hot = [
-            data.claude?.oauth_quota?.five_hour,
-            data.claude?.oauth_quota?.seven_day,
-            data.antigravity?.oauth_quota?.gemini,
-        ].some(b => typeof b?.used_percent === 'number' && b.used_percent >= warningPercent);
+        const hot = visibleQuotaBuckets(data, opts)
+            .some(b => typeof b?.used_percent === 'number' && b.used_percent >= opts.warningPercent);
         this._setStatus(hot ? 'warn' : 'ok', hot ? _('Quota warning') : _('All quotas healthy'));
         this._updatedLabel.text = formatUpdatedAgo(data.timestamp);
     }
@@ -358,7 +359,18 @@ export class IndicatorMenuManager {
     }
 
     _render() {
+        const opts = this._cardOptions();
+        // Tab ids predate the provider names: 'gemini' is the Antigravity tab.
+        const visible = visibleProviders(this._latestData, opts);
+        const tabVisible = { claude: visible.claude, gemini: visible.antigravity };
+        if (!tabVisible[this._activeTab]) {
+            this._activeTab = tabVisible.claude ? 'claude' : 'gemini';
+        }
+        const visibleCount = Object.values(tabVisible).filter(Boolean).length;
+        this._tabBar.visible = visibleCount > 1;
+
         for (const [id, btn] of Object.entries(this._tabButtons)) {
+            btn.visible = tabVisible[id];
             if (id === this._activeTab) {
                 btn.add_style_class_name('ai-usage-tab-btn-active');
             } else {
@@ -368,7 +380,6 @@ export class IndicatorMenuManager {
         this._syncStatus();
 
         this._cardsBox.destroy_all_children();
-        const opts = this._cardOptions();
         const cards = this._activeTab === 'gemini'
             ? buildGeminiCards(this._latestData, opts)
             : buildClaudeCards(this._latestData, opts);

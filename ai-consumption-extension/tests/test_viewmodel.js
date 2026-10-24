@@ -126,6 +126,57 @@ test('panel warning respects the configurable quota threshold', () => {
     eq(buildPanelState(fullData, { warningPercent: 85 }).warning, true);
 });
 
+test('panel omits providers hidden in settings or disabled by the collector', () => {
+    eq(buildPanelState(fullData, { showAntigravity: false }).text, 'Claude 60%');
+    eq(buildPanelState(fullData, { showClaude: false }).text, 'AGY 20%');
+    const data = clone(fullData);
+    data.claude = { status: 'disabled' };
+    eq(buildPanelState(data).text, 'AGY 20%');
+});
+
+test('hidden provider quota does not raise the panel warning', () => {
+    // Claude's weekly bucket is at 90%, above the 75% default.
+    eq(buildPanelState(fullData).warning, true);
+    eq(buildPanelState(fullData, { showClaude: false }).warning, false);
+});
+
+test('panel color follows quota percentages only, not daily token alerts', () => {
+    const data = clone(fullData);
+    data.claude.oauth_quota.five_hour = bucket(20);
+    data.claude.oauth_quota.seven_day = bucket(30);
+    data.claude.today.total_tokens = 18000000;
+    eq(buildPanelState(data, { tokenThreshold: 500000 }).warning, false);
+    data.claude.oauth_quota.five_hour = bucket(74);
+    eq(buildPanelState(data).warning, false);
+    data.claude.oauth_quota.five_hour = bucket(76);
+    eq(buildPanelState(data).warning, true);
+});
+
+test('antigravity activity card without sessions', () => {
+    const data = clone(fullData);
+    data.antigravity.active_sessions = [];
+    const local = buildGeminiCards(data).at(-1);
+    eq(local.subtitle, 'No recent conversations');
+    eq(buildGeminiCards(fullData).at(-1).subtitle, 'Latest: Refactor');
+});
+
+test('stale antigravity quota is flagged instead of shown as current', () => {
+    const data = clone(fullData);
+    data.antigravity.oauth_quota.stale = true;
+    data.antigravity.oauth_quota.fetched_at = '2026-10-23T18:35:00Z';
+    const cards = buildGeminiCards(data);
+    eq(cards[0].title, 'Quota out of date');
+    eq(cards.length, 2, 'info card + local activity');
+    eq(buildPanelState(data, { showClaude: false }).text, 'AGY --%');
+});
+
+test('a separate pro-tier model gets its own card', () => {
+    const data = clone(fullData);
+    data.antigravity.oauth_quota.gemini_pro = { model_name: 'Gemini 4 Argon', ...bucket(40) };
+    const titles = buildGeminiCards(data).map(c => c.title);
+    eq(titles.slice(0, 2), ['Gemini 3 Pro', 'Gemini 4 Argon']);
+});
+
 test('updated-ago text', () => {
     const now = new Date('2026-10-20T20:05:30Z');
     eq(formatUpdatedAgo('2026-10-20T20:05:10Z', now), 'Updated just now');

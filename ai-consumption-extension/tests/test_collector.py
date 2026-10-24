@@ -297,6 +297,75 @@ class TestCollector(unittest.TestCase):
         self.assertEqual(res["today"]["steps"], 8)
         self.assertEqual(res["lifetime"]["steps"], 15)
 
+    def test_antigravity_placeholder_year_one_row(self):
+        # Antigravity keeps a 0001-01-01 UTC placeholder row; converting it to a
+        # negative-offset zone overflows and used to abort the whole DB read.
+        self._use_timezone("America/Bogota")
+        ag_dir = os.path.join(self.test_dir, "antigravity-cli")
+        os.makedirs(ag_dir, exist_ok=True)
+        con = sqlite3.connect(os.path.join(ag_dir, "conversation_summaries.db"))
+        con.execute("""
+            CREATE TABLE conversation_summaries (
+                conversation_id text PRIMARY KEY, title text, workspace_uris text,
+                step_count integer, last_modified_time datetime, not_fully_idle numeric
+            )
+        """)
+        con.executemany("INSERT INTO conversation_summaries VALUES (?, ?, '', ?, ?, 0)", [
+            ("placeholder", "", 0, "0001-01-01 00:00:00+00:00"),
+            ("today", "Recent chat", 4, "2026-10-20 15:27:23.0099021+00:00"),
+        ])
+        con.commit()
+        con.close()
+
+        self.assertEqual(collector.to_local_date("0001-01-01 00:00:00+00:00"), "")
+        res = collector.collect_antigravity_metrics(ag_dir, "2026-10-20")
+        self.assertEqual(res["status"], "ok")
+        self.assertEqual(res["today"]["conversations"], 1)
+        self.assertEqual(res["today"]["steps"], 4)
+        self.assertEqual(res["active_sessions"][0]["title"], "Recent chat")
+
+    def test_antigravity_tier_quotas(self):
+        payload = {
+            "models": {
+                "gemini-3.5-flash-lite": {"displayName": "Gemini 3.5 Flash Lite",
+                                          "quotaInfo": {"remainingFraction": 1, "resetTime": "2026-10-25T00:00:00Z"}},
+                "gemini-3.8-flash-tiered": {"quotaInfo": {"remainingFraction": 0.75, "resetTime": "2026-10-25T00:00:00Z"}},
+                "gemini-4-argon-tiered": {"quotaInfo": {"remainingFraction": 0.5, "resetTime": "2026-10-30T00:00:00Z"}},
+            },
+            "tieredModelIds": {"flash": ["gemini-3.8-flash-tiered"], "pro": ["gemini-3.8-flash-tiered"]},
+        }
+        # Pro plan today: both tiers share one model, so one bucket named from its id.
+        quotas = collector.antigravity_tier_quotas(payload)
+        self.assertEqual(len(quotas), 1)
+        self.assertEqual(quotas[0]["model_name"], "Gemini 3.8 Flash")
+        self.assertEqual(quotas[0]["used_percent"], 25.0)
+
+        payload["tieredModelIds"]["pro"] = ["gemini-4-argon-tiered"]
+        quotas = collector.antigravity_tier_quotas(payload)
+        self.assertEqual([q["model_name"] for q in quotas], ["Gemini 3.8 Flash", "Gemini 4 Argon"])
+
+    def test_stale_antigravity_quota(self):
+        now = 1_000_000.0
+        cached = {"fetched_ts": now - 30, "data": {"gemini": {"used_percent": 10}}}
+        self.assertNotIn("stale", collector.stale_antigravity_quota(cached, now, {}))
+        cached["fetched_ts"] = now - 3600
+        data = collector.stale_antigravity_quota(cached, now, {})
+        self.assertTrue(data["stale"])
+        self.assertIn("fetched_at", data)
+        self.assertNotIn("stale", cached["data"])
+        self.assertEqual(collector.stale_antigravity_quota(None, now, {"x": 1}), {"x": 1})
+
+    def test_disabled_providers_skip_collection(self):
+        claude_dir = os.path.join(self.test_dir, ".claude")
+        ag_dir = os.path.join(self.test_dir, "antigravity-cli")
+        os.makedirs(claude_dir)
+        os.makedirs(ag_dir)
+        claude_res = collector.collect_claude_metrics(claude_dir, {}, self.today_str, disabled=True)
+        ag_res = collector.collect_antigravity_metrics(ag_dir, self.today_str, cache={}, disabled=True)
+        self.assertEqual(claude_res["status"], "disabled")
+        self.assertEqual(ag_res["status"], "disabled")
+        self.assertEqual(ag_res["oauth_quota"], {})
+
     def test_save_cache_private_and_atomic(self):
         cache_path = os.path.join(self.test_dir, "cache-dir", "cache.json")
         collector.save_cache(cache_path, {"a": 1})

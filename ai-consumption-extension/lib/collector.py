@@ -17,6 +17,7 @@ import tempfile
 import urllib.request
 
 OAUTH_CACHE_TTL_SECONDS = 60
+STALE_QUOTA_GRACE_SECONDS = 15 * 60
 LEGACY_CACHE_PATH = "/tmp/ai-consumption-cache.json"
 
 
@@ -27,6 +28,8 @@ def parse_args():
     parser.add_argument("--cache-file", default="", help="Path to cache file for incremental parsing")
     parser.add_argument("--reset-cache", action="store_true", help="Force re-reading all files and APIs")
     parser.add_argument("--skip-network", action="store_true", help="Skip live OAuth quota API requests")
+    parser.add_argument("--skip-claude", action="store_true", help="Do not collect Claude Code metrics")
+    parser.add_argument("--skip-antigravity", action="store_true", help="Do not collect Antigravity metrics")
     return parser.parse_args()
 
 
@@ -44,10 +47,12 @@ def to_local_date(ts):
     s = re.sub(r"(\.\d{6})\d+", r"\1", s)
     try:
         dt = datetime.datetime.fromisoformat(s)
-    except ValueError:
+        if dt.tzinfo is not None:
+            dt = dt.astimezone()
+    # Antigravity stores placeholder rows dated 0001-01-01 UTC, which overflow
+    # when shifted into a negative-offset local zone.
+    except (ValueError, OverflowError):
         return ""
-    if dt.tzinfo is not None:
-        dt = dt.astimezone()
     return dt.date().isoformat()
 
 
@@ -273,7 +278,7 @@ def _collect_today(today_by_key, entries, today_str, file_path):
             today_by_key[k] = e
 
 
-def collect_claude_metrics(claude_dir, cache, today_str, skip_network=False, force_refresh=False):
+def collect_claude_metrics(claude_dir, cache, today_str, skip_network=False, force_refresh=False, disabled=False):
     res = {
         "active_sessions": [],
         "active_count": 0,
@@ -293,6 +298,10 @@ def collect_claude_metrics(claude_dir, cache, today_str, skip_network=False, for
         "oauth_quota": {},
         "status": "ok"
     }
+
+    if disabled:
+        res["status"] = "disabled"
+        return res
 
     if not os.path.isdir(claude_dir):
         res["status"] = "not_found"
@@ -422,6 +431,62 @@ def get_antigravity_access_token(ag_dir):
     return None
 
 
+def tiered_model_name(model_id, model):
+    """Display name for a tiered model; tiered entries usually ship without one."""
+    if model.get("displayName"):
+        return model["displayName"]
+    base = re.sub(r"-tiered$", "", model_id)
+    words = base.split("-")
+    if words and words[0] == "gemini":
+        return "Gemini " + " ".join(w.capitalize() for w in words[1:])
+    return base
+
+
+def antigravity_tier_quotas(models_payload):
+    """Quota buckets for Antigravity's own Gemini tiers ("flash", then "pro").
+
+    The account's plan decides which model backs each tier; when both point at
+    the same model (e.g. Google AI Pro today) only one bucket is returned.
+    """
+    models_map = models_payload.get("models", {})
+    tiers = models_payload.get("tieredModelIds") or {}
+    quotas, seen = [], set()
+    for tier in ("flash", "pro"):
+        for model_id in tiers.get(tier) or []:
+            m = models_map.get(model_id) or {}
+            q = m.get("quotaInfo") or {}
+            if model_id in seen or q.get("remainingFraction") is None or not q.get("resetTime"):
+                continue
+            seen.add(model_id)
+            rem_pct = round(float(q["remainingFraction"]) * 100.0, 1)
+            quotas.append({
+                "model_id": model_id,
+                "model_name": tiered_model_name(model_id, m),
+                "used_percent": round(max(0.0, 100.0 - rem_pct), 1),
+                "remaining_percent": rem_pct,
+                "resets_at": q["resetTime"],
+            })
+            break
+    return quotas
+
+
+def stale_antigravity_quota(cached_ag, now_ts, fallback):
+    """Last good quota when a live fetch fails (usually an expired sign-in).
+
+    A brief outage keeps showing the cached numbers; past the grace period the
+    data is flagged so the UI stops presenting it as current.
+    """
+    if not cached_ag:
+        return fallback
+    data = dict(cached_ag.get("data", {}))
+    fetched_ts = cached_ag.get("fetched_ts", 0)
+    if now_ts - fetched_ts > STALE_QUOTA_GRACE_SECONDS:
+        data["stale"] = True
+        data["fetched_at"] = datetime.datetime.fromtimestamp(
+            fetched_ts, datetime.timezone.utc).isoformat()
+    return data
+
+
 def fetch_antigravity_oauth_quota(ag_dir, cache, force_refresh=False):
     """Fetch Gemini and 3P model quotas from Antigravity backend."""
     now_ts = datetime.datetime.now(datetime.timezone.utc).timestamp()
@@ -432,12 +497,12 @@ def fetch_antigravity_oauth_quota(ag_dir, cache, force_refresh=False):
 
     access_token = get_antigravity_access_token(ag_dir)
     if not access_token:
-        return cached_ag.get("data", {}) if cached_ag else {}
+        return stale_antigravity_quota(cached_ag, now_ts, {})
 
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
-        "User-Agent": "antigravity/1.4.3 linux/amd64"
+        "User-Agent": "antigravity/1.4.6 linux/amd64"
     }
 
     result = {
@@ -471,6 +536,11 @@ def fetch_antigravity_oauth_quota(ag_dir, cache, force_refresh=False):
             models_payload = json.loads(resp.read().decode("utf-8"))
 
         models_map = models_payload.get("models", {})
+        tier_quotas = antigravity_tier_quotas(models_payload)
+        if tier_quotas:
+            result["gemini"] = tier_quotas[0]
+            if len(tier_quotas) > 1:
+                result["gemini_pro"] = tier_quotas[1]
         for key, m in models_map.items():
             q = m.get("quotaInfo") or {}
             rem = q.get("remainingFraction")
@@ -488,7 +558,7 @@ def fetch_antigravity_oauth_quota(ag_dir, cache, force_refresh=False):
                     "remaining_percent": rem_pct,
                     "resets_at": reset_time
                 })
-            if key.startswith("gemini-") and reset_time:
+            if not tier_quotas and key.startswith("gemini-") and reset_time:
                 result["gemini"] = {
                     "model_name": disp or "Gemini 3.8 Flash",
                     "used_percent": used_pct,
@@ -527,10 +597,11 @@ def fetch_antigravity_oauth_quota(ag_dir, cache, force_refresh=False):
         }
         return result
     except Exception:
-        return cached_ag.get("data", {}) if cached_ag else result
+        return stale_antigravity_quota(cached_ag, now_ts, result)
 
 
-def collect_antigravity_metrics(ag_dir, today_str, cache=None, skip_network=False, force_refresh=False):
+def collect_antigravity_metrics(ag_dir, today_str, cache=None, skip_network=False, force_refresh=False,
+                                disabled=False):
     res = {
         "active_sessions": [],
         "active_count": 0,
@@ -550,6 +621,10 @@ def collect_antigravity_metrics(ag_dir, today_str, cache=None, skip_network=Fals
         "oauth_quota": {},
         "status": "ok"
     }
+
+    if disabled:
+        res["status"] = "disabled"
+        return res
 
     if not os.path.isdir(ag_dir):
         res["status"] = "not_found"
@@ -658,12 +733,14 @@ def main():
     claude_data = collect_claude_metrics(
         claude_dir, cache, today_str,
         skip_network=args.skip_network,
-        force_refresh=args.reset_cache
+        force_refresh=args.reset_cache,
+        disabled=args.skip_claude
     )
     ag_data = collect_antigravity_metrics(
         ag_dir, today_str, cache=cache,
         skip_network=args.skip_network,
-        force_refresh=args.reset_cache
+        force_refresh=args.reset_cache,
+        disabled=args.skip_antigravity
     )
 
     try:

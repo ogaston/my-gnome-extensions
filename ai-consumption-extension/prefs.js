@@ -17,6 +17,46 @@ export class AiConsumptionPrefsPage extends Adw.PreferencesPage {
 
         this._settings = settings;
 
+        // Group 0: Providers
+        const providersGroup = new Adw.PreferencesGroup({
+            title: _('Providers'),
+            description: _('Choose which AI tools appear in the top bar and popup'),
+        });
+        this.add(providersGroup);
+
+        const providerRows = {};
+        for (const [key, title] of [
+            ['show-claude', _('Claude Code')],
+            ['show-antigravity', _('Antigravity')],
+        ]) {
+            const row = new Adw.SwitchRow({ title });
+            this._settings.bind(key, row, 'active', Gio.SettingsBindFlags.DEFAULT);
+            providersGroup.add(row);
+            providerRows[key] = row;
+        }
+
+        // Keep at least one provider on: the last active switch can't be turned off.
+        const syncProviderLocks = () => {
+            const active = Object.keys(providerRows).filter(k => this._settings.get_boolean(k));
+            for (const [key, row] of Object.entries(providerRows)) {
+                row.sensitive = !(active.length === 1 && active[0] === key);
+            }
+        };
+        const lockIds = Object.keys(providerRows)
+            .map(key => this._settings.connect(`changed::${key}`, syncProviderLocks));
+        this.connect('destroy', () => lockIds.forEach(id => this._settings.disconnect(id)));
+        syncProviderLocks();
+
+        // Planned integrations, shown but not selectable yet.
+        for (const title of [_('Kimi'), _('OpenCode')]) {
+            providersGroup.add(new Adw.SwitchRow({
+                title,
+                subtitle: _('Coming soon'),
+                active: false,
+                sensitive: false,
+            }));
+        }
+
         // Group 1: General & Display
         const generalGroup = new Adw.PreferencesGroup({
             title: _('General Settings'),

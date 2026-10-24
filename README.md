@@ -14,7 +14,7 @@ Monitors real-time Claude Code and Google Antigravity / Gemini quota percentages
 
 #### Pack & Install
 ```bash
-gnome-extensions pack ai-consumption-extension --force --extra-source=lib --extra-source=stylesheet-light.css -o ai-consumption-extension
+gnome-extensions pack ai-consumption-extension --force --extra-source=lib --extra-source=icons --extra-source=stylesheet-light.css -o ai-consumption-extension
 gnome-extensions install --force ai-consumption-extension/ai-consumption-monitor@omarjayg.shell-extension.zip
 gnome-extensions enable ai-consumption-monitor@omarjayg
 ```

@@ -10,7 +10,10 @@ import { IndicatorMenuManager } from './lib/indicatorMenu.js';
 import { buildPanelState } from './lib/viewModel.js';
 
 // Keys that change what the collector does; everything else only affects rendering.
-const SERVICE_KEYS = ['poll-interval-seconds', 'claude-path-override', 'antigravity-path-override'];
+const SERVICE_KEYS = [
+    'poll-interval-seconds', 'claude-path-override', 'antigravity-path-override',
+    'show-claude', 'show-antigravity',
+];
 
 const AiConsumptionIndicator = GObject.registerClass(
 class AiConsumptionIndicator extends PanelMenu.Button {
@@ -91,6 +94,8 @@ export default class AiConsumptionExtension extends Extension {
         this._settingsChangedId = this._settings.connect('changed', (settings, key) => {
             if (SERVICE_KEYS.includes(key)) {
                 this._applySettingsToService();
+                // Re-collect so a re-enabled provider fills in without waiting a full interval.
+                if (key.startsWith('show-')) this._service.refreshNow();
                 return;
             }
             const latest = this._service.getLatestData();
@@ -109,11 +114,9 @@ export default class AiConsumptionExtension extends Extension {
         const interval = this._settings.get_int('poll-interval-seconds');
         const claudePath = this._settings.get_string('claude-path-override');
         const agPath = this._settings.get_string('antigravity-path-override');
-        this.updateServiceConfig(interval, claudePath, agPath);
-    }
-
-    updateServiceConfig(interval, claudePath, agPath) {
-        this._service.configure(interval, claudePath, agPath);
+        this._service.configure(interval, claudePath, agPath,
+            this._settings.get_boolean('show-claude'),
+            this._settings.get_boolean('show-antigravity'));
         this._service.setInterval(interval);
     }
 
@@ -123,8 +126,8 @@ export default class AiConsumptionExtension extends Extension {
         const state = buildPanelState(data, {
             mode: this._settings.get_string('display-mode'),
             warningPercent: this._settings.get_int('quota-warning-percent'),
-            tokenThreshold: this._settings.get_int('claude-token-daily-threshold'),
-            stepThreshold: this._settings.get_int('antigravity-step-daily-threshold'),
+            showClaude: this._settings.get_boolean('show-claude'),
+            showAntigravity: this._settings.get_boolean('show-antigravity'),
         });
         this._indicator.setLabelVisible(true);
         this._indicator.setWarning(state.warning);

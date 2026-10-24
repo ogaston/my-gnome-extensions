@@ -13,7 +13,7 @@ function fmt(str, ...args) {
     return str.replace(/%s/g, () => String(args[i++]));
 }
 
-export const DEFAULT_WARNING_PERCENT = 85;
+export const DEFAULT_WARNING_PERCENT = 75;
 
 export function formatTokens(count) {
     if (!count || count <= 0) return '0';
@@ -33,6 +33,12 @@ export function formatResetTime(isoStr, now = new Date()) {
     }
     const dayName = d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
     return fmt(_('Resets %s at %s'), dayName, timePart);
+}
+
+function formatShortDate(isoStr) {
+    const d = new Date(isoStr);
+    if (!isoStr || isNaN(d.getTime())) return _('earlier');
+    return d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
 export function formatUpdatedAgo(isoStr, now = new Date()) {
@@ -172,17 +178,24 @@ export function buildGeminiCards(data, opts = {}) {
 
     const cards = [];
     const quota = ag.oauth_quota || {};
-    if (hasQuota(quota.gemini) && quota.gemini.resets_at) {
-        const left = Math.round(quota.gemini.remaining_percent ?? 100 - quota.gemini.used_percent);
+    if (quota.stale) {
+        cards.push(infoCard('gemini', _('Quota out of date'),
+            fmt(_('Last fetched %s · run agy to refresh sign-in'), formatShortDate(quota.fetched_at))));
+    }
+    // "gemini" is the flash tier; "gemini_pro" only appears when the plan backs
+    // the pro tier with a different model.
+    for (const bucket of quota.stale ? [] : [quota.gemini, quota.gemini_pro]) {
+        if (!hasQuota(bucket) || !bucket.resets_at) continue;
+        const left = Math.round(bucket.remaining_percent ?? 100 - bucket.used_percent);
         cards.push(quotaCard({
             icon: 'gemini',
-            title: quota.gemini.model_name || 'Gemini',
+            title: bucket.model_name || 'Gemini',
             subtitle: fmt(_('Antigravity · %s% left'), left),
-            bucket: quota.gemini,
+            bucket,
             warningPercent,
         }));
     }
-    if (hasQuota(quota.third_party_5h) && quota.third_party_5h.resets_at) {
+    if (!quota.stale && hasQuota(quota.third_party_5h) && quota.third_party_5h.resets_at) {
         cards.push(quotaCard({
             icon: 'gemini',
             title: _('Third-party models · 5 hours'),
@@ -191,7 +204,7 @@ export function buildGeminiCards(data, opts = {}) {
             warningPercent,
         }));
     }
-    if (hasQuota(quota.third_party_weekly) && quota.third_party_weekly.resets_at) {
+    if (!quota.stale && hasQuota(quota.third_party_weekly) && quota.third_party_weekly.resets_at) {
         cards.push(quotaCard({
             icon: 'gemini',
             title: _('Third-party models · weekly'),
@@ -211,7 +224,9 @@ export function buildGeminiCards(data, opts = {}) {
     cards.push({
         icon: null,
         title: _('Local Antigravity activity'),
-        subtitle: fmt(_('Latest: %s'), ag.active_sessions?.[0]?.title || _('none')),
+        subtitle: ag.active_sessions?.[0]?.title
+            ? fmt(_('Latest: %s'), ag.active_sessions[0].title)
+            : _('No recent conversations'),
         value: fmt(_('%s steps'), steps),
         severity: barPct === null ? 'neutral' : severity(barPct, 100),
         percent: barPct,
@@ -225,6 +240,26 @@ export function buildGeminiCards(data, opts = {}) {
     return cards;
 }
 
+// A provider is shown unless the user hid it in settings or the collector skipped it.
+export function visibleProviders(data, opts = {}) {
+    return {
+        claude: (opts.showClaude ?? true) && data?.claude?.status !== 'disabled',
+        antigravity: (opts.showAntigravity ?? true) && data?.antigravity?.status !== 'disabled',
+    };
+}
+
+// Live quota windows that count toward the warning state, limited to visible providers.
+export function visibleQuotaBuckets(data, opts = {}) {
+    const visible = visibleProviders(data, opts);
+    const buckets = [];
+    if (visible.claude) {
+        buckets.push(data?.claude?.oauth_quota?.five_hour, data?.claude?.oauth_quota?.seven_day);
+    }
+    const agQuota = data?.antigravity?.oauth_quota;
+    if (visible.antigravity && !agQuota?.stale) buckets.push(agQuota?.gemini, agQuota?.gemini_pro);
+    return buckets;
+}
+
 function pctText(bucket) {
     return hasQuota(bucket) ? `${Math.round(bucket.used_percent)}%` : '--%';
 }
@@ -232,24 +267,20 @@ function pctText(bucket) {
 export function buildPanelState(data, opts = {}) {
     const mode = opts.mode || 'sessions';
     const warningPercent = opts.warningPercent ?? DEFAULT_WARNING_PERCENT;
-    const tokenThreshold = opts.tokenThreshold ?? 0;
-    const stepThreshold = opts.stepThreshold ?? 0;
 
     const claude = data?.claude || {};
     const ag = data?.antigravity || {};
-    const showClaude = claude.status !== 'not_found';
-    const showAg = ag.status !== 'not_found';
+    const visible = visibleProviders(data, opts);
+    const showClaude = visible.claude && claude.status !== 'not_found';
+    const showAg = visible.antigravity && ag.status !== 'not_found';
     const fiveH = claude.oauth_quota?.five_hour;
-    const sevenD = claude.oauth_quota?.seven_day;
-    const gemini = ag.oauth_quota?.gemini;
+    const gemini = ag.oauth_quota?.stale ? null : ag.oauth_quota?.gemini;
     const claudeTokens = claude.today?.total_tokens || 0;
     const agSteps = ag.today?.steps || 0;
 
-    const quotaHot = [fiveH, sevenD, gemini].some(b => hasQuota(b) && b.used_percent >= warningPercent);
-    const warning = quotaHot ||
-        (showClaude && tokenThreshold > 0 && claudeTokens >= tokenThreshold) ||
-        (showAg && stepThreshold > 0 && agSteps >= stepThreshold) ||
-        ag.quota?.status === 'warning';
+    // Only live quota limits color the panel; daily token/step alerts stay in the popup cards.
+    const warning = visibleQuotaBuckets(data, opts)
+        .some(b => hasQuota(b) && b.used_percent >= warningPercent);
 
     const parts = [];
     if (mode === 'tokens') {
@@ -266,6 +297,5 @@ export function buildPanelState(data, opts = {}) {
     return {
         text: parts.length ? parts.join(' · ') : _('AI --'),
         warning,
-        quotaWarning: quotaHot,
     };
 }
