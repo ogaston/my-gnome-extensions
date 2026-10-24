@@ -1,7 +1,7 @@
 {
   "name": "AI Consumption Monitor",
-  "description": "Monitor token consumption, active sessions, and quota for Claude Code and Antigravity.",
-  "uuid": "ai-consumption-monitor@omarjayg",
+  "description": "Shows Claude Code and Antigravity quota and token usage in the top bar.\n\n* Live 5-hour and weekly quota windows, extra usage credits, and Gemini and third-party model limits\n* Today's local token and step totals read from ~/.claude and ~/.gemini/antigravity-cli\n\nLive quota is fetched from Anthropic's and Google's usage endpoints using the OAuth tokens Claude Code and Antigravity already saved on this computer (credentials file or keyring). Tokens and usage data are never sent anywhere else, and online lookups can be turned off in Preferences.\n\nAntigravity conversation stats need python3 to read its SQLite database.",
+  "uuid": "ai-consumption-monitor@ogaston.github.io",
   "shell-version": [
     "45",
     "46",
@@ -12,6 +12,5 @@
   ],
   "settings-schema": "org.gnome.shell.extensions.ai-consumption-monitor",
   "gettext-domain": "ai-consumption-monitor",
-  "url": "https://github.com/ogaston/my-gnome-extensions",
-  "version": 1
+  "url": "https://github.com/ogaston/my-gnome-extensions"
 }

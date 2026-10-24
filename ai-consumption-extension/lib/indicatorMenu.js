@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import Gio from 'gi://Gio';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
@@ -15,7 +16,10 @@ import {
     visibleQuotaBuckets,
 } from './viewModel.js';
 
+// When Blur my Shell is active the popup gets a matching background blur.
+// Its state is only read, never changed.
 const BLUR_UUID = 'blur-my-shell@aunetx';
+const BLUR_EFFECT_NAME = 'ai-usage-bg-blur';
 
 // Brand marks shipped in icons/. Claude is a -symbolic SVG so St tints it
 // with the CSS color; Antigravity keeps its full-color gradient.
@@ -56,7 +60,7 @@ export class IndicatorMenuManager {
         });
 
         this._extensionStateId = Main.extensionManager.connect('extension-state-changed', (_mgr, ext) => {
-            if (ext?.uuid === BLUR_UUID) this._syncBlurState();
+            if (ext.uuid === BLUR_UUID) this._syncBlurState();
         });
         this._syncBlurState();
     }
@@ -66,31 +70,21 @@ export class IndicatorMenuManager {
     }
 
     _syncBlurState() {
-        const blurEnabled = this._isBlurExtensionEnabled();
-        const menuBox = this._menu?.box;
-        if (!menuBox) return;
+        const menuBox = this._menu.box;
         menuBox.add_style_class_name('ai-usage-popup-menu');
 
-        if (blurEnabled) {
+        if (this._isBlurExtensionEnabled()) {
             menuBox.add_style_class_name('ai-usage-blur-active');
-            try {
-                if (!menuBox.get_effect('ai-usage-bg-blur') && Shell.BlurEffect) {
-                    const effect = new Shell.BlurEffect({
-                        mode: Shell.BlurMode.BACKGROUND,
-                    });
-                    if ('radius' in effect) effect.radius = 36;
-                    if ('sigma' in effect) effect.sigma = 36;
-                    if ('brightness' in effect) effect.brightness = 0.68;
-                    menuBox.add_effect_with_name('ai-usage-bg-blur', effect);
-                }
-            } catch (_e) {
-                // CSS translucent fallback still applies
+            if (!menuBox.get_effect(BLUR_EFFECT_NAME)) {
+                menuBox.add_effect_with_name(BLUR_EFFECT_NAME, new Shell.BlurEffect({
+                    mode: Shell.BlurMode.BACKGROUND,
+                    radius: 36,
+                    brightness: 0.68,
+                }));
             }
         } else {
             menuBox.remove_style_class_name('ai-usage-blur-active');
-            if (menuBox.get_effect('ai-usage-bg-blur')) {
-                menuBox.remove_effect_by_name('ai-usage-bg-blur');
-            }
+            menuBox.remove_effect_by_name(BLUR_EFFECT_NAME);
         }
     }
 
@@ -203,7 +197,7 @@ export class IndicatorMenuManager {
         });
         settingsBtn.connect('clicked', () => {
             this._menu.close();
-            this._openPreferences?.();
+            this._openPreferences();
         });
         footerRow.add_child(settingsBtn);
 
@@ -218,7 +212,7 @@ export class IndicatorMenuManager {
 
         this._rootBox.add_child(footerRow);
 
-        this._menu.box?.add_child(this._rootBox);
+        this._menu.box.add_child(this._rootBox);
 
         this._syncStatus();
     }
@@ -401,5 +395,18 @@ export class IndicatorMenuManager {
             this._menu.disconnect(this._menuOpenId);
             this._menuOpenId = null;
         }
+
+        const menuBox = this._menu.box;
+        menuBox.remove_effect_by_name(BLUR_EFFECT_NAME);
+        menuBox.remove_style_class_name('ai-usage-blur-active');
+        menuBox.remove_style_class_name('ai-usage-popup-menu');
+
+        this._rootBox.destroy();
+        this._rootBox = null;
+        this._cardsBox = null;
+        this._tabBar = null;
+        this._tabButtons = null;
+        this._statusDot = null;
+        this._updatedLabel = null;
     }
 }

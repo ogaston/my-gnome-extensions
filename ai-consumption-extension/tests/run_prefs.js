@@ -101,11 +101,6 @@ app.connect('activate', () => {
     });
     claudeGroup.add(claudeBreakdownRow);
 
-    const claudeSessionsRow = new Adw.ActionRow({
-        title: 'Active CLI Sessions',
-        subtitle: 'None',
-    });
-    claudeGroup.add(claudeSessionsRow);
 
     // Antigravity Live Metrics Group
     const agGroup = new Adw.PreferencesGroup({
@@ -118,12 +113,6 @@ app.connect('activate', () => {
         subtitle: '0 steps (0 conversations)',
     });
     agGroup.add(agTodayRow);
-
-    const agQuotaRow = new Adw.ActionRow({
-        title: 'Quota Health',
-        subtitle: 'Checking...',
-    });
-    agGroup.add(agQuotaRow);
 
     const agRecentRow = new Adw.ActionRow({
         title: 'Latest Conversation',
@@ -143,7 +132,6 @@ app.connect('activate', () => {
         const stepThreshold = settings.get_int('antigravity-step-daily-threshold');
         const hasWarning = (tokenThreshold > 0 && claudeTokens >= tokenThreshold) ||
                            (stepThreshold > 0 && agSteps >= stepThreshold) ||
-                           (data.antigravity?.quota?.status === 'warning') ||
                            fiveHUsed >= 85 || geminiUsed >= 85;
 
         let badgeText = '';
@@ -163,48 +151,38 @@ app.connect('activate', () => {
         // Claude section
         const claude = data.claude || {};
         const claudeToday = claude.today || {};
-        claudeGroup.title = `Claude Code (${claude.active_count || 0} active)`;
         claudeTodayRow.subtitle = `${formatTokens(claudeToday.total_tokens || 0)} tokens (${claudeToday.messages || 0} messages) — Lifetime: ${formatTokens(claude.lifetime?.total_tokens || 0)}`;
         const inTok = formatTokens(claudeToday.input_tokens || 0);
         const outTok = formatTokens(claudeToday.output_tokens || 0);
         const cacheTok = formatTokens((claudeToday.cache_creation_tokens || 0) + (claudeToday.cache_read_tokens || 0));
         claudeBreakdownRow.subtitle = `In: ${inTok}  |  Out: ${outTok}  |  Cache: ${cacheTok}`;
 
-        if (claude.active_sessions && claude.active_sessions.length > 0) {
-            claudeSessionsRow.subtitle = claude.active_sessions.map(s => `${s.name} (PID ${s.pid})`).join(', ');
-        } else {
-            claudeSessionsRow.subtitle = 'No active CLI sessions';
-        }
-
         // Antigravity section
         const ag = data.antigravity || {};
         const agToday = ag.today || {};
-        agGroup.title = `Google Antigravity (${ag.active_count || 0} active)`;
         agTodayRow.subtitle = `${agToday.steps || 0} steps today (${agToday.conversations || 0} conversations) — Lifetime: ${ag.lifetime?.steps || 0} steps`;
-        agQuotaRow.subtitle = `${ag.quota?.status === 'warning' ? '⚠️ Warning' : '✅ Healthy'} — ${ag.quota?.details || 'OK'}`;
 
         if (ag.active_sessions && ag.active_sessions.length > 0) {
             const first = ag.active_sessions[0];
-            agRecentRow.subtitle = `${first.title} (${first.step_count} steps in ${first.workspace || 'workspace'})`;
+            agRecentRow.subtitle = `${first.title} (${first.step_count} steps)`;
         } else {
             agRecentRow.subtitle = 'No recent conversations';
         }
     };
 
-    service.connect('metrics-updated', (svc, jsonStr) => {
-        try {
-            updatePreview(JSON.parse(jsonStr));
-        } catch (e) {
-            console.error(e);
-        }
+    service.connect('metrics-updated', (_svc, data) => updatePreview(data));
+
+    const configureService = () => service.configure({
+        intervalSeconds: settings.get_int('poll-interval-seconds'),
+        claudePath: settings.get_string('claude-path-override'),
+        antigravityPath: settings.get_string('antigravity-path-override'),
+        showClaude: settings.get_boolean('show-claude'),
+        showAntigravity: settings.get_boolean('show-antigravity'),
+        allowNetwork: settings.get_boolean('allow-network'),
     });
 
     settings.connect('changed', () => {
-        service.configure(
-            settings.get_int('poll-interval-seconds'),
-            settings.get_string('claude-path-override'),
-            settings.get_string('antigravity-path-override')
-        );
+        configureService();
         const latest = service.getLatestData();
         if (latest) updatePreview(latest);
     });
@@ -215,15 +193,11 @@ app.connect('activate', () => {
     window.add(new AiConsumptionPrefsPage(settings));
 
     window.connect('close-request', () => {
-        service.stop();
+        service.destroy();
         return false;
     });
 
-    service.configure(
-        settings.get_int('poll-interval-seconds'),
-        settings.get_string('claude-path-override'),
-        settings.get_string('antigravity-path-override')
-    );
+    configureService();
     service.start();
 
     window.present();

@@ -3,3 +3,5 @@ __pycache__/
 **/schemas/gschemas.compiled
 *.shell-extension.zip
 .serena/
+node_modules/
+dist/

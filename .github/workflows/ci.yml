@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+
+      - name: Install GJS
+        run: sudo apt-get update && sudo apt-get install -y gjs gir1.2-soup-3.0 gir1.2-secret-1
+
+      - name: Unit tests (ai-consumption-extension)
+        working-directory: ai-consumption-extension
+        run: |
+          gjs -m tests/test_collect.js
+          gjs -m tests/test_viewmodel.js
+          gjs -m tests/test_service.js
+          python3 -B -m unittest discover -s tests
+
+      - name: Pack
+        run: scripts/pack.sh ai-consumption-extension
+
+      - name: Shexli
+        run: |
+          # tree-sitter 0.26 crashes shexli 0.2.1 (segfault in node_text).
+          pip install shexli "tree-sitter<0.26"
+          shexli "$PWD"/dist/*.zip
