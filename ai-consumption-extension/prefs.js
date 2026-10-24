@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import Adw from 'gi://Adw';
 import Gio from 'gi://Gio';
 import GObject from 'gi://GObject';
@@ -17,7 +18,6 @@ export class AiConsumptionPrefsPage extends Adw.PreferencesPage {
 
         this._settings = settings;
 
-        // Group 0: Providers
         const providersGroup = new Adw.PreferencesGroup({
             title: _('Providers'),
             description: _('Choose which AI tools appear in the top bar and popup'),
@@ -47,24 +47,19 @@ export class AiConsumptionPrefsPage extends Adw.PreferencesPage {
         this.connect('destroy', () => lockIds.forEach(id => this._settings.disconnect(id)));
         syncProviderLocks();
 
-        // Planned integrations, shown but not selectable yet.
-        for (const title of [_('Kimi'), _('OpenCode')]) {
-            providersGroup.add(new Adw.SwitchRow({
-                title,
-                subtitle: _('Coming soon'),
-                active: false,
-                sensitive: false,
-            }));
-        }
-
-        // Group 1: General & Display
         const generalGroup = new Adw.PreferencesGroup({
             title: _('General Settings'),
             description: _('Configure monitoring frequency and top-panel display format'),
         });
         this.add(generalGroup);
 
-        // Polling interval row
+        const networkRow = new Adw.SwitchRow({
+            title: _('Query Online Quota'),
+            subtitle: _('Use the sign-in saved by Claude Code and Antigravity to fetch live limits from Anthropic and Google'),
+        });
+        this._settings.bind('allow-network', networkRow, 'active', Gio.SettingsBindFlags.DEFAULT);
+        generalGroup.add(networkRow);
+
         const intervalRow = new Adw.SpinRow({
             title: _('Refresh Interval (seconds)'),
             subtitle: _('Minimum 5 seconds'),
@@ -83,7 +78,6 @@ export class AiConsumptionPrefsPage extends Adw.PreferencesPage {
         );
         generalGroup.add(intervalRow);
 
-        // Display mode combo row
         const modeModel = new Gtk.StringList();
         modeModel.append(_('Quota Percentages (Claude % · AGY %)'));
         modeModel.append(_("Today's Token & Step Totals"));
@@ -109,7 +103,6 @@ export class AiConsumptionPrefsPage extends Adw.PreferencesPage {
         });
         generalGroup.add(displayModeRow);
 
-        // Group 2: Warning Thresholds
         const thresholdGroup = new Adw.PreferencesGroup({
             title: _('Alert Thresholds'),
             description: _('When to highlight quota and daily usage (0 disables a daily threshold)'),
@@ -170,7 +163,6 @@ export class AiConsumptionPrefsPage extends Adw.PreferencesPage {
         );
         thresholdGroup.add(agThresholdRow);
 
-        // Group 3: Custom Paths
         const pathsGroup = new Adw.PreferencesGroup({
             title: _('Custom Directory Overrides'),
             description: _('Leave blank to use standard default locations (~/.claude and ~/.gemini/antigravity-cli)'),
@@ -205,14 +197,6 @@ export class AiConsumptionPrefsPage extends Adw.PreferencesPage {
 
 export default class AiConsumptionExtensionPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
-        const settings = this.getSettings();
-        const translate = (s) => {
-            try {
-                return this.gettext(s);
-            } catch {
-                return s;
-            }
-        };
-        window.add(new AiConsumptionPrefsPage(settings, translate));
+        window.add(new AiConsumptionPrefsPage(this.getSettings(), this.gettext.bind(this)));
     }
 }

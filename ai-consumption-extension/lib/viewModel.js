@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Pure presentation logic shared by the shell menu, the panel label and the
 // GTK simulator. No St/Gtk imports so it can be unit-tested with plain gjs.
 

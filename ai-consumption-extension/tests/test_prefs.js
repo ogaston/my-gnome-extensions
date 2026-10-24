@@ -27,14 +27,15 @@ const settings = new Gio.Settings({ settings_schema: schema });
 
 const extDir = Gio.File.new_for_path(GLib.get_current_dir());
 const prefs = new AiConsumptionExtensionPreferences({
-    uuid: 'ai-consumption-monitor@omarjayg',
+    uuid: 'ai-consumption-monitor@ogaston.github.io',
     dir: extDir,
     path: GLib.get_current_dir(),
     url: extDir.get_uri(),
     metadata: {
-        uuid: 'ai-consumption-monitor@omarjayg',
+        uuid: 'ai-consumption-monitor@ogaston.github.io',
         name: 'AI Consumption Monitor',
         'settings-schema': 'org.gnome.shell.extensions.ai-consumption-monitor',
+        'gettext-domain': 'ai-consumption-monitor',
     },
 });
 prefs.getSettings = () => settings;

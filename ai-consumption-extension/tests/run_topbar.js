@@ -788,34 +788,29 @@ app.connect('activate', () => {
 
     renderCards();
 
-    service.connect('metrics-updated', (svc, jsonStr) => {
-        try {
-            updateUI(JSON.parse(jsonStr));
-        } catch (e) {
-            console.error(e);
-        }
+    service.connect('metrics-updated', (_svc, data) => updateUI(data));
+
+    const configureService = () => service.configure({
+        intervalSeconds: settings.get_int('poll-interval-seconds'),
+        claudePath: settings.get_string('claude-path-override'),
+        antigravityPath: settings.get_string('antigravity-path-override'),
+        showClaude: settings.get_boolean('show-claude'),
+        showAntigravity: settings.get_boolean('show-antigravity'),
+        allowNetwork: settings.get_boolean('allow-network'),
     });
 
     settings.connect('changed', () => {
-        service.configure(
-            settings.get_int('poll-interval-seconds'),
-            settings.get_string('claude-path-override'),
-            settings.get_string('antigravity-path-override')
-        );
+        configureService();
         const latest = service.getLatestData();
         if (latest) updateUI(latest);
     });
 
     win.connect('close-request', () => {
-        service.stop();
+        service.destroy();
         return false;
     });
 
-    service.configure(
-        settings.get_int('poll-interval-seconds'),
-        settings.get_string('claude-path-override'),
-        settings.get_string('antigravity-path-override')
-    );
+    configureService();
     service.start();
 
     win.present();

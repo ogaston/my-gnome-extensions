@@ -37,6 +37,11 @@
       <summary>Show Antigravity</summary>
       <description>Collect and display Antigravity usage in the panel and popup.</description>
     </key>
+    <key name="allow-network" type="b">
+      <default>true</default>
+      <summary>Query online quota</summary>
+      <description>Use the OAuth tokens saved by Claude Code and Antigravity to fetch live quota from Anthropic and Google. When off, only local usage files are read.</description>
+    </key>
     <key name="claude-path-override" type="s">
       <default>''</default>
       <summary>Claude directory path override</summary>
