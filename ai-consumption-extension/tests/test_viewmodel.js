@@ -160,6 +160,23 @@ test('antigravity activity card without sessions', () => {
     eq(buildGeminiCards(fullData).at(-1).subtitle, 'Latest: Refactor');
 });
 
+test('stale antigravity quota is flagged instead of shown as current', () => {
+    const data = clone(fullData);
+    data.antigravity.oauth_quota.stale = true;
+    data.antigravity.oauth_quota.fetched_at = '2026-10-23T18:35:00Z';
+    const cards = buildGeminiCards(data);
+    eq(cards[0].title, 'Quota out of date');
+    eq(cards.length, 2, 'info card + local activity');
+    eq(buildPanelState(data, { showClaude: false }).text, 'AGY --%');
+});
+
+test('a separate pro-tier model gets its own card', () => {
+    const data = clone(fullData);
+    data.antigravity.oauth_quota.gemini_pro = { model_name: 'Gemini 4 Argon', ...bucket(40) };
+    const titles = buildGeminiCards(data).map(c => c.title);
+    eq(titles.slice(0, 2), ['Gemini 3 Pro', 'Gemini 4 Argon']);
+});
+
 test('updated-ago text', () => {
     const now = new Date('2026-10-20T20:05:30Z');
     eq(formatUpdatedAgo('2026-10-20T20:05:10Z', now), 'Updated just now');

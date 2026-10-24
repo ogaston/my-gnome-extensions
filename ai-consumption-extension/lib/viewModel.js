@@ -35,6 +35,12 @@ export function formatResetTime(isoStr, now = new Date()) {
     return fmt(_('Resets %s at %s'), dayName, timePart);
 }
 
+function formatShortDate(isoStr) {
+    const d = new Date(isoStr);
+    if (!isoStr || isNaN(d.getTime())) return _('earlier');
+    return d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
 export function formatUpdatedAgo(isoStr, now = new Date()) {
     if (!isoStr) return '';
     const d = new Date(isoStr);
@@ -172,17 +178,24 @@ export function buildGeminiCards(data, opts = {}) {
 
     const cards = [];
     const quota = ag.oauth_quota || {};
-    if (hasQuota(quota.gemini) && quota.gemini.resets_at) {
-        const left = Math.round(quota.gemini.remaining_percent ?? 100 - quota.gemini.used_percent);
+    if (quota.stale) {
+        cards.push(infoCard('gemini', _('Quota out of date'),
+            fmt(_('Last fetched %s · run agy to refresh sign-in'), formatShortDate(quota.fetched_at))));
+    }
+    // "gemini" is the flash tier; "gemini_pro" only appears when the plan backs
+    // the pro tier with a different model.
+    for (const bucket of quota.stale ? [] : [quota.gemini, quota.gemini_pro]) {
+        if (!hasQuota(bucket) || !bucket.resets_at) continue;
+        const left = Math.round(bucket.remaining_percent ?? 100 - bucket.used_percent);
         cards.push(quotaCard({
             icon: 'gemini',
-            title: quota.gemini.model_name || 'Gemini',
+            title: bucket.model_name || 'Gemini',
             subtitle: fmt(_('Antigravity · %s% left'), left),
-            bucket: quota.gemini,
+            bucket,
             warningPercent,
         }));
     }
-    if (hasQuota(quota.third_party_5h) && quota.third_party_5h.resets_at) {
+    if (!quota.stale && hasQuota(quota.third_party_5h) && quota.third_party_5h.resets_at) {
         cards.push(quotaCard({
             icon: 'gemini',
             title: _('Third-party models · 5 hours'),
@@ -191,7 +204,7 @@ export function buildGeminiCards(data, opts = {}) {
             warningPercent,
         }));
     }
-    if (hasQuota(quota.third_party_weekly) && quota.third_party_weekly.resets_at) {
+    if (!quota.stale && hasQuota(quota.third_party_weekly) && quota.third_party_weekly.resets_at) {
         cards.push(quotaCard({
             icon: 'gemini',
             title: _('Third-party models · weekly'),
@@ -242,7 +255,8 @@ export function visibleQuotaBuckets(data, opts = {}) {
     if (visible.claude) {
         buckets.push(data?.claude?.oauth_quota?.five_hour, data?.claude?.oauth_quota?.seven_day);
     }
-    if (visible.antigravity) buckets.push(data?.antigravity?.oauth_quota?.gemini);
+    const agQuota = data?.antigravity?.oauth_quota;
+    if (visible.antigravity && !agQuota?.stale) buckets.push(agQuota?.gemini, agQuota?.gemini_pro);
     return buckets;
 }
 
@@ -260,7 +274,7 @@ export function buildPanelState(data, opts = {}) {
     const showClaude = visible.claude && claude.status !== 'not_found';
     const showAg = visible.antigravity && ag.status !== 'not_found';
     const fiveH = claude.oauth_quota?.five_hour;
-    const gemini = ag.oauth_quota?.gemini;
+    const gemini = ag.oauth_quota?.stale ? null : ag.oauth_quota?.gemini;
     const claudeTokens = claude.today?.total_tokens || 0;
     const agSteps = ag.today?.steps || 0;
 
